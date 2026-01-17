@@ -7,12 +7,17 @@ import { Car, Zap, Wifi, Navigation } from "lucide-react";
 
 export function FallbackMap() {
     // Simulated Time
-    const [time, setTime] = useState(new Date());
+    const [time, setTime] = useState<Date | null>(null);
+    const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
+        setMounted(true);
+        setTime(new Date());
         const timer = setInterval(() => setTime(new Date()), 1000);
         return () => clearInterval(timer);
     }, []);
+
+    if (!mounted) return null; // Prevent hydration mismatch
 
     return (
         <div className="relative w-full h-full min-h-[500px] bg-slate-950 overflow-hidden rounded-xl border border-slate-800 shadow-2xl">
@@ -30,7 +35,7 @@ export function FallbackMap() {
                         Krung Thon Buri Intersection
                     </h3>
                     <p className="text-xs text-slate-400 font-mono">LAT: 13.7208 • LNG: 100.5018</p>
-                    <p className="text-xs text-slate-400 font-mono mt-1">{time.toLocaleTimeString()}</p>
+                    <p className="text-xs text-slate-400 font-mono mt-1">{time?.toLocaleTimeString()}</p>
                 </div>
             </div>
 
