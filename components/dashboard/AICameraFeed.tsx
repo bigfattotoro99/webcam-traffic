@@ -20,11 +20,10 @@ interface DetectedObject {
 
 export function AICameraFeed({ zone = "krungthon" }: { zone?: ZoneId }) {
     const [objects, setObjects] = useState<DetectedObject[]>([]);
-    const [counts, setCounts] = useState({ cars: 0, people: 0 });
+    const [counts, setCounts] = useState({ vehicles: 0, people: 0 });
     const [logs, setLogs] = useState<string[]>(["INIT 0x0... SYSTEM_READY"]);
 
     useEffect(() => {
-        // Animation & Simulation loop
         let lastId = 0;
         const generateObject = () => {
             const rand = Math.random();
@@ -34,54 +33,53 @@ export function AICameraFeed({ zone = "krungthon" }: { zone?: ZoneId }) {
             if (rand > 0.8) type = "person";
             else if (rand > 0.6) {
                 type = "taxi";
-                color = Math.random() > 0.5 ? "#ff69b4" : "#22c55e";
+                color = Math.random() > 0.5 ? "#ffeb3b" : "#4caf50"; // Thai Taxi colors
             } else if (rand > 0.55) {
                 type = "bus";
+                color = "#ff9800";
             }
 
-            const confidence = Math.round(Math.random() * 10 + 88);
+            const confidence = Math.round(Math.random() * 8 + 91);
             const direction = Math.random() > 0.5 ? 1 : -1;
+            const speed = (Math.random() * 0.3 + 0.15) * direction;
 
             return {
                 id: ++lastId,
                 type,
                 color,
-                x: direction > 0 ? -20 : 110, // Start off-screen
-                y: Math.random() * 50 + 25,
-                width: type === "bus" ? 22 : (type === "car" || type === "taxi" ? 14 : 4),
-                height: type === "bus" ? 8 : (type === "car" || type === "taxi" ? 8 : 10),
+                x: direction > 0 ? -20 : 110,
+                y: type === 'person' ? Math.random() * 20 + 65 : Math.random() * 30 + 30, // People on sidewalks
+                width: type === "bus" ? 18 : (type === "car" || type === "taxi" ? 12 : 3),
+                height: type === "bus" ? 8 : (type === "car" || type === "taxi" ? 7 : 7),
                 confidence,
-                speed: (Math.random() * 0.4 + 0.2) * direction,
+                speed,
             };
         };
 
-        // Initialize with some objects
         let activeObjects: DetectedObject[] = [];
 
         const interval = setInterval(() => {
-            // Update positions
             activeObjects = activeObjects
                 .map(obj => ({ ...obj, x: obj.x + (obj.speed || 0) }))
-                // Filter out those that left the screen
                 .filter(obj => obj.x > -30 && obj.x < 130);
 
-            // Periodically add new objects
-            if (activeObjects.length < 5 && Math.random() > 0.95) {
+            if (activeObjects.length < 6 && Math.random() > 0.94) {
                 const newObj = generateObject();
                 activeObjects.push(newObj);
 
-                // Add log entry
-                setLogs(prev => [`[${new Date().toLocaleTimeString()}] DETECTED: ${newObj.type.toUpperCase()} ID:0x${newObj.id.toString(16)}`, ...prev].slice(0, 10));
+                setLogs(prev => [
+                    `[${new Date().toLocaleTimeString()}] DETECT: ${newObj.type.toUpperCase()} | SPD: ${(Math.abs(newObj.speed || 0) * 100).toFixed(1)}kph | DIR: ${newObj.speed && newObj.speed > 0 ? 'EAST' : 'WEST'}`,
+                    ...prev
+                ].slice(0, 8));
 
-                // Update counts
                 setCounts(prev => ({
-                    cars: prev.cars + (newObj.type !== 'person' ? 1 : 0),
+                    vehicles: prev.vehicles + (newObj.type !== 'person' ? 1 : 0),
                     people: prev.people + (newObj.type === 'person' ? 1 : 0),
                 }));
             }
 
             setObjects([...activeObjects]);
-        }, 50); // 20 FPS for smooth motion
+        }, 50);
 
         return () => clearInterval(interval);
     }, []);
@@ -95,59 +93,64 @@ export function AICameraFeed({ zone = "krungthon" }: { zone?: ZoneId }) {
                         AI วิเคราะห์กระแสจราจร
                     </span>
                     <Badge variant="outline" className="font-mono text-[8px] border-emerald-500/30 text-emerald-400 py-0 h-5">
-                        8K • 60 FPS • LIVE
+                        8K • 60 FPS • ANALYZING
                     </Badge>
                 </CardTitle>
             </CardHeader>
-            <CardContent className="p-0 relative">
-                <div className="relative aspect-video bg-[#050505] overflow-hidden">
-                    {/* Realistic Background - Road Surface */}
-                    <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1542361345-89e58247f2d1?q=80&w=3270&auto=format&fit=crop')] bg-cover bg-center grayscale contrast-150 opacity-30"></div>
+            <CardContent className="p-0 relative flex-1 flex flex-col">
+                <div className="relative aspect-video bg-[#050505] overflow-hidden shrink-0">
+                    <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1542361345-89e58247f2d1?q=80&w=3270&auto=format&fit=crop')] bg-cover bg-center grayscale contrast-150 opacity-20"></div>
 
-                    {/* Floating HUD Indicators */}
-                    <div className="absolute inset-0 pointer-events-none border border-emerald-500/10 m-2 z-20"></div>
-                    <div className="absolute top-2 left-2 text-[8px] font-mono text-emerald-500/40 z-20">FR_INDEX: 489230</div>
-                    <div className="absolute bottom-2 left-2 text-[8px] font-mono text-emerald-500/40 z-20">ISO: 400 • 1/120s</div>
-
-                    {/* NEW SMAL HUD AT TOP - As requested */}
+                    {/* HUD Overlay */}
                     <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30">
                         <div className="bg-emerald-500/10 backdrop-blur-md text-emerald-400 text-[9px] font-bold px-3 py-1 rounded-full border border-emerald-500/20 flex items-center gap-2 shadow-lg">
                             <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                            ZONE: {zone === 'krungthon' ? 'Krung Thon Buri 01' :
-                                zone === 'sukhumvit' ? 'Sukhumvit 21 (Asoke)' :
-                                    zone === 'sathon' ? 'Sathon-Naradhiwas' : 'Rama IV Junction'}
+                            NODE: {zone.toUpperCase()}_01
                         </div>
                     </div>
 
-                    {/* Detected Objects Overlays */}
+                    {/* Detected Objects */}
                     {objects.map((obj) => (
                         <div
                             key={obj.id}
-                            className="absolute flex flex-col items-center justify-center z-10 pointer-events-none"
+                            className="absolute z-10 pointer-events-none transition-all duration-75"
                             style={{
                                 left: `${obj.x}%`,
                                 top: `${obj.y}%`,
                                 width: `${obj.width}%`,
                                 height: `${obj.height}%`,
-                                transition: 'none' // Disable CSS transition for smooth frame-by-frame updates
+                                transform: `rotate(${obj.speed && obj.speed < 0 ? 180 : 0}deg)`,
                             }}
                         >
-                            <div
-                                className="w-full h-full rounded-sm border shadow-[0_0_10px_rgba(16,185,129,0.2)]"
-                                style={{
-                                    borderColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981'),
-                                    backgroundColor: obj.type === 'person' ? 'rgba(56,189,248,0.05)' : (obj.color ? `${obj.color}10` : 'rgba(16,185,129,0.05)'),
-                                    borderWidth: '1.5px'
-                                }}
-                            >
-                                <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                                    <Badge
-                                        className="rounded-md px-1 py-0 text-[8px] font-bold shadow-lg border-0 flex items-center gap-1"
-                                        style={{ backgroundColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981'), color: '#000' }}
+                            {/* Visual Representation */}
+                            <div className="relative w-full h-full">
+                                {obj.type === 'person' ? (
+                                    <div className="w-full h-full flex items-center justify-center animate-bounce duration-700">
+                                        <div className="w-1.5 h-1.5 bg-sky-400 rounded-full shadow-[0_0_8px_#38bdf8]" />
+                                        <div className="absolute -bottom-1 w-2 h-0.5 bg-sky-400/20 blur-sm" />
+                                    </div>
+                                ) : (
+                                    <div
+                                        className="w-full h-full rounded-[4px] relative border border-white/20 shadow-xl"
+                                        style={{ backgroundColor: obj.color || '#333' }}
                                     >
-                                        {obj.type === 'person' ? <User className="h-2.5 w-2.5" /> : (obj.type === 'bus' ? <ShieldCheck className="h-2.5 w-2.5" /> : <CarIcon className="h-2.5 w-2.5" />)}
-                                        {obj.confidence}%
-                                    </Badge>
+                                        {/* Windshield */}
+                                        <div className="absolute top-1 left-1 right-1 h-[20%] bg-white/20 rounded-sm" />
+                                        {/* Headlights */}
+                                        <div className="absolute top-0 -right-0.5 w-1 h-1 bg-yellow-200/40 rounded-full" />
+                                        <div className="absolute bottom-0 -right-0.5 w-1 h-1 bg-yellow-200/40 rounded-full" />
+                                    </div>
+                                )}
+
+                                {/* Detection Label */}
+                                <div
+                                    className="absolute -top-5 left-0 px-1 py-0.5 rounded-sm text-[6px] font-black uppercase text-black"
+                                    style={{
+                                        backgroundColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981'),
+                                        transform: `rotate(${obj.speed && obj.speed < 0 ? -180 : 0}deg)`
+                                    }}
+                                >
+                                    {obj.type} {obj.confidence}%
                                 </div>
                             </div>
                         </div>
@@ -156,30 +159,35 @@ export function AICameraFeed({ zone = "krungthon" }: { zone?: ZoneId }) {
                     <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.02),rgba(0,255,0,0.01),rgba(0,0,255,0.02))] bg-[size:100%_4px,4px_100%] opacity-10"></div>
                 </div>
 
-                {/* AI REAL-TIME DATA LOG (The "Conversion" part) */}
-                <div className="h-24 bg-black/80 font-mono text-[9px] p-2 text-emerald-500/60 overflow-hidden leading-[1.3] relative border-t border-white/5">
-                    <div className="absolute top-0 right-2 text-[7px] text-zinc-700 font-bold uppercase mt-1">Live_Stream</div>
-                    <div className="flex flex-col-reverse gap-0.5 animate-pulse">
+                {/* Real-time Logs */}
+                <div className="flex-1 bg-black/80 font-mono text-[8px] p-2 text-emerald-500/50 overflow-hidden relative border-t border-white/5 min-h-[80px]">
+                    <div className="flex flex-col-reverse gap-0.5">
                         {logs.map((log, i) => (
                             <p key={i} className={i === 0 ? "text-emerald-400 font-bold" : ""}>{log}</p>
                         ))}
                     </div>
                 </div>
 
-                {/* Info Bar */}
-                <div className="flex bg-black/40 border-t border-white/5 p-3 justify-between items-center shrink-0">
-                    <div className="flex gap-4">
-                        <div className="flex flex-col">
-                            <span className="text-[9px] text-zinc-500 uppercase font-black tracking-widest leading-none mb-1">TOTAL_SIM</span>
-                            <span className="text-lg font-black text-white font-mono leading-none">{(1240 + counts.cars).toLocaleString()}</span>
+                {/* Counter Bar */}
+                <div className="flex bg-black/40 border-t border-white/5 p-4 justify-between items-center shrink-0">
+                    <div className="flex gap-8">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                                <CarIcon className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Vehicles</span>
+                                <span className="text-xl font-black text-white font-mono leading-none">{(842 + counts.vehicles).toLocaleString()}</span>
+                            </div>
                         </div>
-                    </div>
-                    <div className="text-right">
-                        <span className="text-[7px] text-emerald-500/60 font-black block mb-1">REALTIME_CONVERSION_ACTIVE</span>
-                        <div className="flex gap-0.5 justify-end">
-                            {[1, 1, 1, 1, 0.5].map((op, i) => (
-                                <div key={i} className="w-1 h-2 bg-emerald-500/80" style={{ opacity: op }}></div>
-                            ))}
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-sky-500/10 rounded-lg border border-sky-500/20">
+                                <User className="w-4 h-4 text-sky-400" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Pedestrians</span>
+                                <span className="text-xl font-black text-white font-mono leading-none">{(312 + counts.people).toLocaleString()}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
