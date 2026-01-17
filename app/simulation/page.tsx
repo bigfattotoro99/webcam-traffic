@@ -1,337 +1,572 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { Navigation } from "@/components/navigation/Navigation";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useSettingsStore } from "@/lib/store/settings";
 import {
-    Play, Pause, RefreshCcw, ShieldAlert,
-    Navigation, Timer, Activity, Radio,
-    Zap, ArrowUpDown, ArrowLeftRight
+    Play,
+    Pause,
+    RefreshCcw,
+    Zap,
+    ArrowUpDown,
+    ArrowLeftRight,
+    ShieldAlert,
+    Activity,
+    Timer,
+    ExternalLink,
 } from "lucide-react";
-import Link from "next/link";
 
-interface Car {
-    id: number;
-    type: "sedan" | "taxi" | "bus" | "suv";
-    color: string;
-    direction: "N" | "S" | "E" | "W";
-    pos: number;
+// --- Types & Constants ---
+
+type Direction = "N" | "S" | "E" | "W";
+type Phase = "NS" | "EW";
+type VehicleType = "car" | "truck";
+
+interface Vehicle {
+    id: string;
+    type: VehicleType;
+    laneId: string; // e.g., "N1", "N2"
+    direction: Direction;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
     speed: number;
     targetSpeed: number;
+    state: "moving" | "stopped";
+    hasCrossedIntersection: boolean;
+    color?: string; // For fallback rendering
 }
 
-const INTERSECTION_CENTER = 50;
-const STOP_LINE_OFFSET = 12;
-const CAR_LENGTH = 7;
-const MIN_GAP = 2; // Fixed gap between cars
+const CANVAS_SIZE = 800;
+const ROAD_WIDTH = 120; // 60px per lane (2 lanes = 120px)
+const LANE_WIDTH = 60;
+const CENTER = CANVAS_SIZE / 2;
+const STOP_LINE_OFFSET = ROAD_WIDTH / 2 + 10;
+const INTERSECTION_MIN = CENTER - ROAD_WIDTH / 2;
+const INTERSECTION_MAX = CENTER + ROAD_WIDTH / 2;
+
+// --- Vehicle Assets ---
+
+const VEHICLE_CONFIGS = {
+    car: { width: 40, height: 20 },
+    truck: { width: 60, height: 28 },
+};
 
 export default function SimulationPage() {
-    const [lights, setLights] = useState({
-        N: "red" as "green" | "red",
-        S: "red" as "green" | "red",
-        E: "green" as "green" | "red",
-        W: "green" as "green" | "red",
-    });
-    const [currentPhase, setCurrentPhase] = useState<"NS" | "EW">("EW");
-    const [isManual, setIsManual] = useState(false);
-    const [cars, setCars] = useState<Car[]>([]);
+    const { settings } = useSettingsStore();
+
+    // --- State ---
     const [isPaused, setIsPaused] = useState(false);
-    const nextCarId = useRef(0);
+    const [isManual, setIsManual] = useState(false);
+    const [currentPhase, setCurrentPhase] = useState<Phase>("EW");
+    const [phaseTimer, setPhaseTimer] = useState(settings.greenDuration);
+    const [cumulativePassed, setCumulativePassed] = useState(0);
 
-    // Simulation Loop
+    // --- Refs ---
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const vehiclesRef = useRef<Vehicle[]>([]);
+    const nextIdRef = useRef(0);
+    const requestRef = useRef<number>();
+    const imagesRef = useRef<{ car: HTMLImageElement; truck: HTMLImageElement } | null>(null);
+    const reservationRef = useRef<Set<string>>(new Set()); // Simple reservation by area/lane
+
+    // --- Initialization ---
+
     useEffect(() => {
-        if (isPaused) return;
+        // Load images
+        const carImg = new Image();
+        carImg.src = "/vehicles/car.png";
+        const truckImg = new Image();
+        truckImg.src = "/vehicles/truck.png";
 
-        const interval = setInterval(() => {
-            setCars(prevCars => {
-                const directions: ("N" | "S" | "E" | "W")[] = ["N", "S", "E", "W"];
-                let updatedCars: Car[] = [];
+        let loaded = 0;
+        const onLoaded = () => {
+            loaded++;
+            if (loaded === 2) {
+                imagesRef.current = { car: carImg, truck: truckImg };
+            }
+        };
+        carImg.onload = onLoaded;
+        truckImg.onload = onLoaded;
 
-                directions.forEach(dir => {
-                    const laneCars = prevCars.filter(c => c.direction === dir).sort((a, b) => b.pos - a.pos);
-                    const light = lights[dir];
+        return () => {
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        };
+    }, []);
 
-                    const updatedLane = laneCars.map((car, idx) => {
-                        let nextPos = car.pos + car.speed;
-                        let newSpeed = car.speed;
+    // --- Simulation Logic ---
 
-                        // Interaction with light
-                        const isNearStopLine = car.pos < INTERSECTION_CENTER - STOP_LINE_OFFSET && nextPos >= INTERSECTION_CENTER - STOP_LINE_OFFSET;
-                        const shouldStopAtLight = (light === "red") && isNearStopLine;
+    const spawnVehicle = useCallback(() => {
+        const directions: Direction[] = ["N", "S", "E", "W"];
+        const lanes = ["1", "2"];
 
-                        // RIGID COLLISION DETECTION (Treat as blocks)
-                        const carInFront = idx > 0 ? laneCars[idx - 1] : null;
-                        const distanceToNext = carInFront ? carInFront.pos - car.pos : 1000;
+        directions.forEach((dir) => {
+            lanes.forEach((laneNum) => {
+                const laneId = `${dir}${laneNum}`;
+                const spawnProb = settings.spawnRate / 60; // Approximate per frame probability
 
-                        // If the car in front exists, it must be at least CAR_LENGTH + MIN_GAP ahead
-                        const isTooClose = distanceToNext < (CAR_LENGTH + MIN_GAP);
+                if (Math.random() < spawnProb) {
+                    // Check if spawn area is clear
+                    const existingInLane = vehiclesRef.current.filter((v) => v.laneId === laneId);
+                    let canSpawn = true;
 
-                        if (shouldStopAtLight || isTooClose) {
-                            // Rapid deceleration but smooth stopping
-                            newSpeed = Math.max(0, car.speed - 0.1);
-                        } else {
-                            // Accelerate to target speed
-                            newSpeed = Math.min(car.targetSpeed, car.speed + 0.05);
+                    existingInLane.forEach((v) => {
+                        let dist = 0;
+                        if (dir === "N") dist = v.y;
+                        if (dir === "S") dist = CANVAS_SIZE - v.y;
+                        if (dir === "E") dist = v.x;
+                        if (dir === "W") dist = CANVAS_SIZE - v.x;
+
+                        if (dist < 100) canSpawn = false; // Too close to spawn point
+                    });
+
+                    if (canSpawn) {
+                        const type: VehicleType = Math.random() > 0.8 ? "truck" : "car";
+                        const config = VEHICLE_CONFIGS[type];
+                        const id = `v-${nextIdRef.current++}`;
+
+                        let x = 0, y = 0;
+                        if (dir === "N") {
+                            x = CENTER - ROAD_WIDTH / 2 + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                            y = -50;
+                        } else if (dir === "S") {
+                            x = CENTER + ROAD_WIDTH / 2 - (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                            y = CANVAS_SIZE + 50;
+                        } else if (dir === "E") {
+                            x = -50;
+                            y = CENTER + ROAD_WIDTH / 2 - (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                        } else if (dir === "W") {
+                            x = CANVAS_SIZE + 50;
+                            y = CENTER - ROAD_WIDTH / 2 + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
                         }
 
-                        // Boundary check for car in front again during movement
-                        const realNextPos = car.pos + newSpeed;
-                        if (carInFront && realNextPos > carInFront.pos - (CAR_LENGTH + MIN_GAP)) {
-                            newSpeed = 0; // Absolute stop if about to intersect
-                        }
-
-                        return { ...car, pos: car.pos + newSpeed, speed: newSpeed };
-                    }).filter(car => car.pos < 120);
-
-                    updatedCars = [...updatedCars, ...updatedLane];
-                });
-
-                // Spawn logic for all 4 directions
-                if (Math.random() > 0.94 && updatedCars.length < 32) {
-                    const spawnDir = directions[Math.floor(Math.random() * 4)];
-                    const laneCount = updatedCars.filter(c => c.direction === spawnDir).length;
-
-                    // Check if spawn point is clear
-                    const firstInLane = updatedCars.filter(c => c.direction === spawnDir).sort((a, b) => a.pos - b.pos)[0];
-                    const isSpawnClear = !firstInLane || firstInLane.pos > (CAR_LENGTH + MIN_GAP);
-
-                    if (laneCount < 8 && isSpawnClear) {
-                        updatedCars.push({
-                            id: nextCarId.current++,
-                            type: "sedan",
-                            color: ["#ef4444", "#3b82f6", "#10b981", "#ffeb3b"][Math.floor(Math.random() * 4)],
-                            direction: spawnDir,
-                            pos: -5,
-                            speed: 0.3,
-                            targetSpeed: 0.4 + Math.random() * 0.2,
+                        vehiclesRef.current.push({
+                            id,
+                            type,
+                            laneId,
+                            direction: dir,
+                            x,
+                            y,
+                            width: config.width,
+                            height: config.height,
+                            speed: 0,
+                            targetSpeed: settings.vehicleSpeed,
+                            state: "moving",
+                            hasCrossedIntersection: false,
                         });
                     }
                 }
-
-                return updatedCars;
             });
-        }, 30);
+        });
+    }, [settings]);
+
+    const updateSimulation = useCallback(() => {
+        if (isPaused) return;
+
+        // 1. Spawn
+        spawnVehicle();
+
+        // 2. Move & Collide
+        const nextVehicles: Vehicle[] = [];
+        const lights = {
+            N: currentPhase === "NS",
+            S: currentPhase === "NS",
+            E: currentPhase === "EW",
+            W: currentPhase === "EW",
+        };
+
+        vehiclesRef.current.forEach((v) => {
+            let nextX = v.x;
+            let nextY = v.y;
+            let targetSpeed = v.targetSpeed;
+            let shouldStop = false;
+
+            // --- Stop Line Logic ---
+            const isApproachingIntersection =
+                (v.direction === "N" && v.y < CENTER - STOP_LINE_OFFSET) ||
+                (v.direction === "S" && v.y > CENTER + STOP_LINE_OFFSET) ||
+                (v.direction === "E" && v.x < CENTER - STOP_LINE_OFFSET) ||
+                (v.direction === "W" && v.x > CENTER + STOP_LINE_OFFSET);
+
+            const willCrossStopLine =
+                (v.direction === "N" && v.y + v.speed + v.width / 2 >= CENTER - STOP_LINE_OFFSET) ||
+                (v.direction === "S" && v.y - v.speed - v.width / 2 <= CENTER + STOP_LINE_OFFSET) ||
+                (v.direction === "E" && v.x + v.speed + v.width / 2 >= CENTER - STOP_LINE_OFFSET) ||
+                (v.direction === "W" && v.x - v.speed - v.width / 2 <= CENTER + STOP_LINE_OFFSET);
+
+            if (isApproachingIntersection && willCrossStopLine && !v.hasCrossedIntersection) {
+                if (!lights[v.direction]) {
+                    shouldStop = true;
+                }
+            }
+
+            // --- Collision Logic (Solid Block) ---
+            const sameLaneVehicles = vehiclesRef.current.filter(
+                (other) => other.laneId === v.laneId && other.id !== v.id
+            );
+
+            sameLaneVehicles.forEach((other) => {
+                let dist = 1000;
+                if (v.direction === "N") dist = other.y - v.y - (v.width / 2 + other.width / 2);
+                if (v.direction === "S") dist = v.y - other.y - (v.width / 2 + other.width / 2);
+                if (v.direction === "E") dist = other.x - v.x - (v.width / 2 + other.width / 2);
+                if (v.direction === "W") dist = v.x - other.x - (v.width / 2 + other.width / 2);
+
+                if (dist > 0 && dist < settings.minGap + 10) {
+                    if (dist < settings.minGap) {
+                        shouldStop = true;
+                    } else {
+                        // Smooth slowdown
+                        targetSpeed = Math.min(targetSpeed, (dist / (settings.minGap + 10)) * v.targetSpeed);
+                    }
+                }
+            });
+
+            // --- Intersection Intersection Logic (Strict Box) ---
+            // check if inside box
+            const inBox =
+                v.x > INTERSECTION_MIN && v.x < INTERSECTION_MAX &&
+                v.y > INTERSECTION_MIN && v.y < INTERSECTION_MAX;
+
+            if (inBox && !v.hasCrossedIntersection) {
+                // Just entered, continue until out
+            }
+
+            // Check for exit
+            if (!v.hasCrossedIntersection) {
+                if (v.direction === "N" && v.y > INTERSECTION_MAX) v.hasCrossedIntersection = true;
+                if (v.direction === "S" && v.y < INTERSECTION_MIN) v.hasCrossedIntersection = true;
+                if (v.direction === "E" && v.x > INTERSECTION_MAX) v.hasCrossedIntersection = true;
+                if (v.direction === "W" && v.x < INTERSECTION_MIN) v.hasCrossedIntersection = true;
+
+                if (v.hasCrossedIntersection) {
+                    setCumulativePassed(p => p + 1);
+                }
+            }
+
+            // Speed adjustment
+            if (shouldStop) {
+                v.speed = Math.max(0, v.speed - 0.2);
+                v.state = "stopped";
+            } else {
+                if (v.speed < targetSpeed) v.speed = Math.min(targetSpeed, v.speed + 0.1);
+                else if (v.speed > targetSpeed) v.speed = Math.max(targetSpeed, v.speed - 0.1);
+                v.state = v.speed > 0.1 ? "moving" : "stopped";
+            }
+
+            // Position update
+            if (v.direction === "N") v.y += v.speed;
+            if (v.direction === "S") v.y -= v.speed;
+            if (v.direction === "E") v.x += v.speed;
+            if (v.direction === "W") v.x -= v.speed;
+
+            // Keep if on screen
+            if (v.x > -100 && v.x < CANVAS_SIZE + 100 && v.y > -100 && v.y < CANVAS_SIZE + 100) {
+                nextVehicles.push(v);
+            }
+        });
+
+        vehiclesRef.current = nextVehicles;
+    }, [isPaused, currentPhase, spawnVehicle, settings]);
+
+    // --- Rendering ---
+
+    const draw = useCallback((ctx: CanvasRenderingContext2D) => {
+        // 1. Clear
+        ctx.fillStyle = "#0a0a0c";
+        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+        // 2. Draw Road
+        ctx.fillStyle = "#1e1e22";
+        // Horizontal
+        ctx.fillRect(0, CENTER - ROAD_WIDTH / 2, CANVAS_SIZE, ROAD_WIDTH);
+        // Vertical
+        ctx.fillRect(CENTER - ROAD_WIDTH / 2, 0, ROAD_WIDTH, CANVAS_SIZE);
+
+        // Lane Markers
+        ctx.setLineDash([10, 10]);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+        ctx.lineWidth = 2;
+        // Horizontal center
+        ctx.beginPath();
+        ctx.moveTo(0, CENTER); ctx.lineTo(CANVAS_SIZE, CENTER); ctx.stroke();
+        // Vertical center
+        ctx.beginPath();
+        ctx.moveTo(CENTER, 0); ctx.lineTo(CENTER, CANVAS_SIZE); ctx.stroke();
+
+        // Lane divides
+        ctx.setLineDash([5, 15]);
+        // N
+        ctx.beginPath(); ctx.moveTo(CENTER - LANE_WIDTH, 0); ctx.lineTo(CENTER - LANE_WIDTH, INTERSECTION_MIN); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(CENTER + LANE_WIDTH, 0); ctx.lineTo(CENTER + LANE_WIDTH, INTERSECTION_MIN); ctx.stroke();
+        // S
+        ctx.beginPath(); ctx.moveTo(CENTER - LANE_WIDTH, INTERSECTION_MAX); ctx.lineTo(CENTER - LANE_WIDTH, CANVAS_SIZE); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(CENTER + LANE_WIDTH, INTERSECTION_MAX); ctx.lineTo(CENTER + LANE_WIDTH, CANVAS_SIZE); ctx.stroke();
+        // E
+        ctx.beginPath(); ctx.moveTo(0, CENTER - LANE_WIDTH); ctx.lineTo(INTERSECTION_MIN, CENTER - LANE_WIDTH); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, CENTER + LANE_WIDTH); ctx.lineTo(INTERSECTION_MIN, CENTER + LANE_WIDTH); ctx.stroke();
+        // W
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX, CENTER - LANE_WIDTH); ctx.lineTo(CANVAS_SIZE, CENTER - LANE_WIDTH); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX, CENTER + LANE_WIDTH); ctx.lineTo(CANVAS_SIZE, CENTER + LANE_WIDTH); ctx.stroke();
+
+        ctx.setLineDash([]); // Reset
+
+        // Stop Lines
+        ctx.strokeStyle = "#444";
+        ctx.lineWidth = 4;
+        // N (Top)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MIN - 10); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MIN - 10); ctx.stroke();
+        // S (Bottom)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MAX + 10); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MAX + 10); ctx.stroke();
+        // E (Left)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 10, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MIN - 10, INTERSECTION_MAX); ctx.stroke();
+        // W (Right)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX + 10, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MAX + 10, INTERSECTION_MAX); ctx.stroke();
+
+        // Intersection Box
+        ctx.fillStyle = "rgba(255,255,255,0.03)";
+        ctx.fillRect(INTERSECTION_MIN, INTERSECTION_MIN, ROAD_WIDTH, ROAD_WIDTH);
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.strokeRect(INTERSECTION_MIN, INTERSECTION_MIN, ROAD_WIDTH, ROAD_WIDTH);
+
+        // 3. Draw Traffic Lights
+        const drawLight = (dir: Direction, color: "green" | "red") => {
+            let x = 0, y = 0;
+            if (dir === "N") { x = INTERSECTION_MAX + 20; y = INTERSECTION_MIN - 20; }
+            if (dir === "S") { x = INTERSECTION_MIN - 20; y = INTERSECTION_MAX + 20; }
+            if (dir === "E") { x = INTERSECTION_MIN - 20; y = INTERSECTION_MIN - 20; }
+            if (dir === "W") { x = INTERSECTION_MAX + 20; y = INTERSECTION_MAX + 20; }
+
+            ctx.fillStyle = "#111";
+            ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = color === "green" ? "#10b981" : "#ef4444";
+            ctx.shadowBlur = color === "green" ? 15 : 0;
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
+        };
+
+        drawLight("N", currentPhase === "NS" ? "green" : "red");
+        drawLight("S", currentPhase === "NS" ? "green" : "red");
+        drawLight("E", currentPhase === "EW" ? "green" : "red");
+        drawLight("W", currentPhase === "EW" ? "green" : "red");
+
+        // 4. Draw Vehicles
+        vehiclesRef.current.forEach((v) => {
+            ctx.save();
+            ctx.translate(v.x, v.y);
+
+            let rotation = 0;
+            if (v.direction === "N") rotation = Math.PI / 2;
+            if (v.direction === "S") rotation = -Math.PI / 2;
+            if (v.direction === "W") rotation = Math.PI;
+
+            ctx.rotate(rotation);
+
+            if (imagesRef.current) {
+                const img = imagesRef.current[v.type];
+                ctx.drawImage(img, -v.width / 2, -v.height / 2, v.width, v.height);
+            } else {
+                // Fallback
+                ctx.fillStyle = v.type === "truck" ? "#3b82f6" : "#f59e0b";
+                ctx.fillRect(-v.width / 2, -v.height / 2, v.width, v.height);
+            }
+
+            // Brake lights
+            if (v.state === "stopped") {
+                ctx.fillStyle = "#ef4444";
+                ctx.beginPath(); ctx.arc(-v.width / 2, -v.height / 3, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(-v.width / 2, v.height / 3, 2, 0, Math.PI * 2); ctx.fill();
+            }
+
+            ctx.restore();
+        });
+    }, [currentPhase, vehiclesRef]);
+
+    const loop = useCallback(() => {
+        const ctx = canvasRef.current?.getContext("2d");
+        if (ctx) {
+            updateSimulation();
+            draw(ctx);
+        }
+        requestRef.current = requestAnimationFrame(loop);
+    }, [updateSimulation, draw]);
+
+    useEffect(() => {
+        requestRef.current = requestAnimationFrame(loop);
+        return () => {
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        };
+    }, [loop]);
+
+    // --- Phase Control ---
+
+    useEffect(() => {
+        if (isPaused || isManual) return;
+
+        const interval = setInterval(() => {
+            setPhaseTimer((prev) => {
+                if (prev <= 1) {
+                    setCurrentPhase((p) => (p === "NS" ? "EW" : "NS"));
+                    return settings.greenDuration;
+                }
+                return prev - 1;
+            });
+        }, 1000);
 
         return () => clearInterval(interval);
-    }, [lights, isPaused]);
-
-    // Synchronized Cycle Logic
-    useEffect(() => {
-        if (isManual || isPaused) return;
-
-        const timer = setInterval(() => {
-            togglePhase();
-        }, 7000);
-
-        return () => clearInterval(timer);
-    }, [isManual, isPaused, currentPhase]);
+    }, [isPaused, isManual, settings.greenDuration]);
 
     const togglePhase = () => {
-        setCurrentPhase(prev => {
-            const next = prev === "NS" ? "EW" : "NS";
-            if (next === "NS") {
-                setLights({ N: "green", S: "green", E: "red", W: "red" });
-            } else {
-                setLights({ N: "red", S: "red", E: "green", W: "green" });
-            }
-            return next;
-        });
+        if (!isManual) return;
+        setCurrentPhase((p) => (p === "NS" ? "EW" : "NS"));
     };
 
-    const toggleManual = () => setIsManual(!isManual);
+    const handleReset = () => {
+        vehiclesRef.current = [];
+        setCumulativePassed(0);
+        setPhaseTimer(settings.greenDuration);
+    };
 
     return (
-        <div className="fixed inset-0 bg-[#020617] text-white flex flex-col overflow-hidden leading-tight">
-            {/* Header Bar */}
-            <header className="h-16 border-b border-white/5 bg-slate-900/50 backdrop-blur-xl px-8 flex items-center justify-between z-50">
-                <div className="flex items-center gap-4">
-                    <Link href="/map" className="p-2 hover:bg-white/5 rounded-full transition-colors">
-                        <Navigation className="w-5 h-5 text-sky-400 rotate-[-45deg]" />
-                    </Link>
-                    <div>
-                        <h1 className="text-sm font-black tracking-tighter uppercase">Traffic_Core_S4_Precision</h1>
-                        <p className="text-[10px] text-sky-400/50 font-mono italic">PHASE_SYNC_ACTIVE | BLOCK_COLLISION_V1</p>
-                    </div>
-                </div>
+        <ProtectedRoute>
+            <div className="fixed inset-0 bg-[#020617] text-white flex flex-col overflow-hidden leading-tight font-sans">
+                <Navigation />
 
-                <div className="flex items-center gap-6">
-                    <div className="flex flex-col items-end">
-                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Operation_Mode</span>
-                        <Badge variant={isManual ? "destructive" : "outline"} className="px-3 py-0 h-5 font-mono text-[9px]">
-                            {isManual ? "MANUAL_BYPASS" : "AI_SYNC_LOCKED"}
-                        </Badge>
-                    </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={toggleManual}
-                        className={`border-white/10 ${isManual ? 'bg-red-500/10 text-red-400 border-red-500/50' : 'hover:bg-white/5'}`}
-                    >
-                        {isManual ? <ShieldAlert className="w-4 h-4 mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
-                        {isManual ? "Exit Manual Mode" : "Manual Override"}
-                    </Button>
-                </div>
-            </header>
+                <main className="flex-1 relative flex">
+                    {/* Sidebar Controls */}
+                    <aside className="w-80 border-r border-white/5 bg-slate-950 p-6 flex flex-col gap-6 z-40 shadow-2xl overflow-y-auto">
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-[10px] font-black uppercase text-zinc-500 tracking-widest flex items-center gap-2">
+                                    <ShieldAlert className="w-3 h-3 text-amber-500" /> Control_Center
+                                </h2>
+                                <Badge variant={isManual ? "destructive" : "outline"} className="px-3 py-0 h-5 font-mono text-[9px]">
+                                    {isManual ? "MANUAL_OVERRIDE" : "AI_OPTIMIZED"}
+                                </Badge>
+                            </div>
 
-            <main className="flex-1 relative flex">
-                {/* Manual Control Console */}
-                <aside className="w-80 border-r border-white/5 bg-slate-950 p-6 flex flex-col gap-6 z-40 shadow-2xl">
-                    <div className="space-y-4">
-                        <h2 className="text-[10px] font-black uppercase text-zinc-500 tracking-widest flex items-center gap-2">
-                            <Timer className="w-3 h-3 text-sky-400" /> Phase_Synchronization
-                        </h2>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Button
+                                    onClick={() => setIsManual(!isManual)}
+                                    variant="outline"
+                                    className={`h-12 border-white/10 ${isManual ? 'bg-amber-500/10 text-amber-500' : 'hover:bg-white/5'}`}
+                                >
+                                    {isManual ? <Zap className="w-4 h-4 mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
+                                    {isManual ? "Auto Mode" : "Manual"}
+                                </Button>
+                                <Button
+                                    onClick={() => setIsPaused(!isPaused)}
+                                    variant="outline"
+                                    className="h-12 border-white/10 hover:bg-white/5"
+                                >
+                                    {isPaused ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
+                                    {isPaused ? "Resume" : "Pause"}
+                                </Button>
+                            </div>
 
-                        <div className="space-y-3">
-                            <Card className={`p-4 border transition-all cursor-pointer ${currentPhase === 'NS' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/5'}`}
-                                onClick={() => isManual && setCurrentPhase("NS") || isManual && setLights({ N: "green", S: "green", E: "red", W: "red" })}>
-                                <div className="flex items-center justify-between mb-3">
-                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Phase A: North-South</span>
-                                    <ArrowUpDown className={`w-4 h-4 ${currentPhase === 'NS' ? 'text-emerald-500' : 'text-zinc-700'}`} />
+                            <Card className="bg-black/40 border-white/5 p-4 space-y-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Active_Phase</span>
+                                    <div className="flex items-center gap-2">
+                                        <Timer className="w-3 h-3 text-sky-400" />
+                                        <span className="text-xs font-mono text-sky-400">{!isManual && phaseTimer}s</span>
+                                    </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    <Badge variant={lights.N === 'green' ? 'default' : 'outline'} className={lights.N === 'green' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-600'}>NORTH</Badge>
-                                    <Badge variant={lights.S === 'green' ? 'default' : 'outline'} className={lights.S === 'green' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-600'}>SOUTH</Badge>
+
+                                <div className="space-y-2">
+                                    <Button
+                                        disabled={!isManual}
+                                        onClick={togglePhase}
+                                        className={`w-full h-12 gap-3 transition-all ${currentPhase === 'NS' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-transparent text-zinc-600 border-white/5'}`}
+                                        variant="outline"
+                                    >
+                                        <ArrowUpDown className="w-4 h-4" />
+                                        <div className="text-left">
+                                            <div className="text-[9px] font-black uppercase">Phase A</div>
+                                            <div className="text-[10px]">North & South</div>
+                                        </div>
+                                    </Button>
+
+                                    <Button
+                                        disabled={!isManual}
+                                        onClick={togglePhase}
+                                        className={`w-full h-12 gap-3 transition-all ${currentPhase === 'EW' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-transparent text-zinc-600 border-white/5'}`}
+                                        variant="outline"
+                                    >
+                                        <ArrowLeftRight className="w-4 h-4" />
+                                        <div className="text-left">
+                                            <div className="text-[9px] font-black uppercase">Phase B</div>
+                                            <div className="text-[10px]">East & West</div>
+                                        </div>
+                                    </Button>
                                 </div>
                             </Card>
 
-                            <Card className={`p-4 border transition-all cursor-pointer ${currentPhase === 'EW' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/5'}`}
-                                onClick={() => isManual && setCurrentPhase("EW") || isManual && setLights({ N: "red", S: "red", E: "green", W: "green" })}>
-                                <div className="flex items-center justify-between mb-3">
-                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Phase B: East-West</span>
-                                    <ArrowLeftRight className={`w-4 h-4 ${currentPhase === 'EW' ? 'text-emerald-500' : 'text-zinc-700'}`} />
+                            <div className="p-4 bg-sky-500/5 border border-sky-500/10 rounded-xl space-y-3">
+                                <h3 className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">Realtime_Telemetry</h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <p className="text-[8px] text-zinc-500 uppercase">Vehicles_In_Grid</p>
+                                        <p className="text-lg font-black text-white">{vehiclesRef.current.length}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[8px] text-zinc-500 uppercase">Total_Flow</p>
+                                        <p className="text-lg font-black text-white">{cumulativePassed}</p>
+                                    </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    <Badge variant={lights.E === 'green' ? 'default' : 'outline'} className={lights.E === 'green' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-600'}>EAST</Badge>
-                                    <Badge variant={lights.W === 'green' ? 'default' : 'outline'} className={lights.W === 'green' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-600'}>WEST</Badge>
+                            </div>
+                        </div>
+
+                        <div className="mt-auto space-y-3">
+                            <Button onClick={handleReset} variant="outline" className="w-full h-10 border-white/10 text-zinc-400 hover:text-white uppercase text-[10px] font-black tracking-widest">
+                                <RefreshCcw className="w-3 h-3 mr-2" /> Reset Simulation
+                            </Button>
+                            <div className="flex items-center gap-2 justify-center py-2 opacity-50">
+                                <Badge className="bg-white/10 text-[8px] font-mono">BKK_G_ENG_v4.2</Badge>
+                                <Badge className="bg-white/10 text-[8px] font-mono">CANVAS_2D</Badge>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* Simulation Viewport */}
+                    <section className="flex-1 relative bg-[#0a0a0c] overflow-hidden flex items-center justify-center p-8">
+                        <div className="relative shadow-[0_0_100px_rgba(0,0,0,0.5)] border border-white/5 rounded-2xl overflow-hidden aspect-square h-full max-h-[90vh]">
+                            <canvas
+                                ref={canvasRef}
+                                width={CANVAS_SIZE}
+                                height={CANVAS_SIZE}
+                                className="w-full h-full cursor-crosshair"
+                            />
+
+                            {/* HUD Overlays */}
+                            <div className="absolute top-6 left-6 pointer-events-none">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Badge className="bg-emerald-500 text-black font-black uppercase text-[10px] tracking-widest px-2 py-0.5 animate-pulse">
+                                        Live_Engine
+                                    </Badge>
+                                    <span className="text-[12px] font-mono text-white/20 tracking-tighter">8_LANE_PHASE_SYNC</span>
                                 </div>
-                            </Card>
+                                <h2 className="text-4xl font-black text-white/5 italic select-none leading-none">
+                                    SMART_TRAFFIC_ASSISTANCE
+                                </h2>
+                            </div>
 
-                            <Button
-                                disabled={!isManual}
-                                onClick={togglePhase}
-                                className="w-full h-12 bg-sky-500/20 text-sky-400 border-sky-500/50 hover:bg-sky-500/30 font-black uppercase text-xs"
-                                variant="outline"
-                            >
-                                <Zap className="w-4 h-4 mr-2" /> Manually Toggle Phase
-                            </Button>
+                            <div className="absolute bottom-6 right-6 pointer-events-none text-right">
+                                <p className="text-[10px] font-mono text-sky-400/50 uppercase mb-1 tracking-widest">Global_Status</p>
+                                <p className="text-sm font-black text-white tracking-widest underline decoration-sky-500/50 underline-offset-4">
+                                    {currentPhase === 'NS' ? 'NORTH_SOUTH_OPEN' : 'EAST_WEST_OPEN'}
+                                </p>
+                            </div>
                         </div>
-
-                        <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl space-y-2">
-                            <p className="text-[9px] text-emerald-500 font-bold uppercase flex items-center gap-2">
-                                <Zap className="w-3 h-3 animate-pulse" /> Precision_Block_Active
-                            </p>
-                            <p className="text-[8px] text-zinc-500 leading-tight italic">Vehicles are now treated as solid blocks. Zero overlap between object boundaries is enforced.</p>
-                        </div>
-                    </div>
-
-                    <div className="mt-auto space-y-4">
-                        <div className="grid grid-cols-1 gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setIsPaused(!isPaused)} className="border-white/10 hover:bg-white/5 font-black uppercase text-[9px]">
-                                {isPaused ? <Play className="w-3 h-3 mr-2" /> : <Pause className="w-3 h-3 mr-2" />}
-                                {isPaused ? "Resume Simulation" : "Pause Simulation"}
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => setCars([])} className="border-white/10 hover:bg-white/5 font-black uppercase text-[9px]">
-                                <RefreshCcw className="w-3 h-3 mr-2" /> Reset Environment
-                            </Button>
-                        </div>
-                    </div>
-                </aside>
-
-                {/* High-Fidelity Simulation Viewport */}
-                <section className="flex-1 relative bg-[#050505] overflow-hidden">
-                    <div className="absolute inset-0 flex items-center justify-center p-8">
-                        <svg viewBox="0 0 100 100" className="w-full h-full max-w-[900px] aspect-square">
-                            {/* Ground & Glow */}
-                            <defs>
-                                <radialGradient id="grad1" cx="50%" cy="50%" r="50%">
-                                    <stop offset="0%" stopColor="#1e293b" stopOpacity="0.3" />
-                                    <stop offset="100%" stopColor="#050505" stopOpacity="0" />
-                                </radialGradient>
-                            </defs>
-                            <circle cx="50" cy="50" r="50" fill="url(#grad1)" />
-
-                            {/* Road Geometry */}
-                            <rect x="0" y="44" width="100" height="12" fill="#121212" />
-                            <rect x="44" y="0" width="12" height="100" fill="#121212" />
-
-                            {/* Surface Details */}
-                            <line x1="0" y1="50" x2="100" y2="50" stroke="white" strokeWidth="0.2" strokeDasharray="1 1" opacity="0.1" />
-                            <line x1="50" y1="0" x2="50" y2="100" stroke="white" strokeWidth="0.2" strokeDasharray="1 1" opacity="0.1" />
-
-                            {/* Central Junction */}
-                            <rect x="44" y="44" width="12" height="12" fill="#181818" />
-                            <rect x="45" y="45" width="10" height="10" stroke="#ffffff11" fill="none" strokeWidth="0.1" />
-
-                            {/* Signal Indicators */}
-                            <g>
-                                <line x1="43" y1="44" x2="43" y2="56" stroke={lights.W === 'green' ? '#10b981' : '#ef4444'} strokeWidth="1" />
-                                <line x1="57" y1="44" x2="57" y2="56" stroke={lights.E === 'green' ? '#10b981' : '#ef4444'} strokeWidth="1" />
-                                <line x1="44" y1="43" x2="56" y2="43" stroke={lights.N === 'green' ? '#10b981' : '#ef4444'} strokeWidth="1" />
-                                <line x1="44" y1="57" x2="56" y2="57" stroke={lights.S === 'green' ? '#10b981' : '#ef4444'} strokeWidth="1" />
-                            </g>
-
-                            {/* Dynamic Vehicle Rendering */}
-                            {cars.map(car => {
-                                let rotation = 0;
-                                let tx = 0;
-                                let ty = 0;
-
-                                switch (car.direction) {
-                                    case 'W': rotation = 0; tx = car.pos; ty = 46.5; break;
-                                    case 'E': rotation = 180; tx = 100 - car.pos; ty = 50.5; break;
-                                    case 'N': rotation = 90; tx = 50.5; ty = car.pos; break;
-                                    case 'S': rotation = 270; tx = 46.5; ty = 100 - car.pos; break;
-                                }
-
-                                return (
-                                    <g key={car.id} style={{ transform: `translate(${tx}px, ${ty}px) rotate(${rotation}deg)`, transition: 'transform 30ms linear' }}>
-                                        {/* Shadow */}
-                                        <rect x="-3" y="-1.5" width="7" height="3" rx="0.4" fill="black" opacity="0.3" transform="translate(0.5, 0.5)" />
-                                        {/* Car Body */}
-                                        <rect x="-3" y="-1.5" width="7" height="3" rx="0.4" fill={car.color} />
-                                        {/* Windshield */}
-                                        <rect x="1.5" y="-1.2" width="2" height="2.4" fill="rgba(255,255,255,0.4)" rx="0.2" />
-                                        {/* Top Detail */}
-                                        <rect x="-1" y="-1" width="2" height="2" fill="rgba(0,0,0,0.1)" rx="0.1" />
-                                        {/* Headlights */}
-                                        <rect x="3.4" y="-1.2" width="0.6" height="0.6" fill="#fff" opacity="0.8" />
-                                        <rect x="3.4" y="0.6" width="0.6" height="0.6" fill="#fff" opacity="0.8" />
-                                        {/* Active Brake Indicators */}
-                                        {car.speed < 0.1 && (
-                                            <>
-                                                <rect x="-3.2" y="-1.2" width="0.6" height="0.6" fill="#ef4444" className="animate-pulse shadow-[0_0_10px_red]" />
-                                                <rect x="-3.2" y="0.6" width="0.6" height="0.6" fill="#ef4444" className="animate-pulse shadow-[0_0_10px_red]" />
-                                            </>
-                                        )}
-                                    </g>
-                                );
-                            })}
-                        </svg>
-                    </div>
-
-                    {/* Overlay Graphics */}
-                    <div className="absolute top-8 left-8 space-y-2">
-                        <div className="flex items-center gap-2">
-                            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-                            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 backdrop-blur-md uppercase text-[9px] font-black tracking-widest">
-                                Solid_Block_Engine_v1.2
-                            </Badge>
-                        </div>
-                        <h2 className="text-[32px] font-black tracking-tighter text-white/5 select-none leading-none uppercase italic">
-                            GRID_PAIR_SIMULATOR
-                        </h2>
-                    </div>
-
-                    {/* Status HUD */}
-                    <div className="absolute top-8 right-8 flex gap-4">
-                        <div className="glass p-3 px-5 rounded-2xl border border-white/5 flex flex-col items-center">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase">Current_Phase</span>
-                            <span className="text-sm font-black text-sky-400 font-mono tracking-widest">{currentPhase === 'NS' ? 'PHASE_A' : 'PHASE_B'}</span>
-                        </div>
-                    </div>
-                </section>
-            </main>
-        </div>
+                    </section>
+                </main>
+            </div>
+        </ProtectedRoute>
     );
 }
