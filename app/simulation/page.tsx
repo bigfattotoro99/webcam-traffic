@@ -25,9 +25,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 type Direction = "N" | "S" | "E" | "W";
 type LightState = "green" | "yellow" | "red";
 type PhaseState =
-    | "NS_GREEN" | "NS_YELLOW" | "WE_GREEN" | "WE_YELLOW"
-    | "N_GREEN" | "N_YELLOW" | "W_GREEN" | "W_YELLOW"
-    | "ALL_RED_1" | "ALL_RED_2";
+    // 2-Way Phases
+    | "2W_NS_GREEN" | "2W_NS_YELLOW" | "2W_WE_GREEN" | "2W_WE_YELLOW"
+    // 1-Way Phases (Sequential 4 Direction)
+    | "1W_N_GREEN" | "1W_N_YELLOW" | "1W_S_GREEN" | "1W_S_YELLOW"
+    | "1W_W_GREEN" | "1W_W_YELLOW" | "1W_E_GREEN" | "1W_E_YELLOW"
+    | "ALL_RED";
 type VehicleType = "car" | "truck";
 
 interface Vehicle {
@@ -63,7 +66,7 @@ export default function SimulationPage() {
     const [simMode, setSimMode] = useState<"1way" | "2way">("2way");
     const [isPaused, setIsPaused] = useState(false);
     const [isManual, setIsManual] = useState(false);
-    const [phase, setPhase] = useState<PhaseState>("NS_GREEN");
+    const [phase, setPhase] = useState<PhaseState>("2W_NS_GREEN");
     const [timer, setTimer] = useState(settings.greenDuration);
     const [cumulativePassed, setCumulativePassed] = useState(0);
 
@@ -77,32 +80,32 @@ export default function SimulationPage() {
     useEffect(() => {
         vehiclesRef.current = [];
         setCumulativePassed(0);
-        setPhase(simMode === "2way" ? "NS_GREEN" : "N_GREEN");
+        setPhase(simMode === "2way" ? "2W_NS_GREEN" : "1W_N_GREEN");
         setTimer(settings.greenDuration);
     }, [simMode, settings.greenDuration]);
 
     // --- Map Phase to Lights ---
     const getLights = useCallback(() => {
         const l: Record<Direction, LightState> = { N: "red", S: "red", E: "red", W: "red" };
-        if (simMode === "2way") {
-            switch (phase) {
-                case "NS_GREEN": l.N = "green"; l.S = "green"; break;
-                case "NS_YELLOW": l.N = "yellow"; l.S = "yellow"; break;
-                case "WE_GREEN": l.W = "green"; l.E = "green"; break;
-                case "WE_YELLOW": l.W = "yellow"; l.E = "yellow"; break;
-                default: break;
-            }
-        } else {
-            switch (phase) {
-                case "N_GREEN": l.N = "green"; break;
-                case "N_YELLOW": l.N = "yellow"; break;
-                case "W_GREEN": l.W = "green"; break;
-                case "W_YELLOW": l.W = "yellow"; break;
-                default: break;
-            }
+
+        switch (phase) {
+            case "2W_NS_GREEN": l.N = "green"; l.S = "green"; break;
+            case "2W_NS_YELLOW": l.N = "yellow"; l.S = "yellow"; break;
+            case "2W_WE_GREEN": l.W = "green"; l.E = "green"; break;
+            case "2W_WE_YELLOW": l.W = "yellow"; l.E = "yellow"; break;
+
+            case "1W_N_GREEN": l.N = "green"; break;
+            case "1W_N_YELLOW": l.N = "yellow"; break;
+            case "1W_S_GREEN": l.S = "green"; break;
+            case "1W_S_YELLOW": l.S = "yellow"; break;
+            case "1W_W_GREEN": l.W = "green"; break;
+            case "1W_W_YELLOW": l.W = "yellow"; break;
+            case "1W_E_GREEN": l.E = "green"; break;
+            case "1W_E_YELLOW": l.E = "yellow"; break;
+            default: break;
         }
         return l;
-    }, [phase, simMode]);
+    }, [phase]);
 
     // --- Initialization ---
     useEffect(() => {
@@ -116,7 +119,7 @@ export default function SimulationPage() {
 
     // --- Simulation Update ---
     const spawnVehicle = useCallback(() => {
-        const directions: Direction[] = simMode === "2way" ? ["N", "S", "E", "W"] : ["N", "W"];
+        const directions: Direction[] = ["N", "S", "E", "W"];
 
         directions.forEach((dir) => {
             let lanes = ["1", "2", "3", "4"];
@@ -187,9 +190,13 @@ export default function SimulationPage() {
                     (v.direction === "W" && v.x < stopLineCoord) ||
                     (v.direction === "E" && v.x > stopLineCoord);
             } else {
-                stopLineCoord = INTERSECTION_MIN - 15;
-                isApproaching = (v.direction === "N" && v.y < stopLineCoord) ||
-                    (v.direction === "W" && v.x < stopLineCoord);
+                // In 1-Way mode, each direction has its own entry/exit side
+                stopLineCoord = (v.direction === "N" || v.direction === "W") ? INTERSECTION_MIN - 15 : INTERSECTION_MAX + 15;
+                isApproaching =
+                    (v.direction === "N" && v.y < stopLineCoord) ||
+                    (v.direction === "S" && v.y > stopLineCoord) ||
+                    (v.direction === "W" && v.x < stopLineCoord) ||
+                    (v.direction === "E" && v.x > stopLineCoord);
             }
 
             const distToLine = Math.abs(v.direction === "N" || v.direction === "S" ? stopLineCoord - v.y : stopLineCoord - v.x) - (v.width / 2);
@@ -296,8 +303,11 @@ export default function SimulationPage() {
             ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 15, CENTER); ctx.lineTo(INTERSECTION_MIN - 15, INTERSECTION_MAX); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX + 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MAX + 15, CENTER); ctx.stroke();
         } else {
-            ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MIN - 15); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MIN - 15); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MIN - 15, INTERSECTION_MAX); ctx.stroke();
+            // Sequential 1-Way: draw full stop lines for each entry as it comes
+            ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MIN - 15); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MIN - 15); ctx.stroke(); // N
+            ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MAX + 15); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MAX + 15); ctx.stroke(); // S
+            ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MIN - 15, INTERSECTION_MAX); ctx.stroke(); // W
+            ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX + 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MAX + 15, INTERSECTION_MAX); ctx.stroke(); // E
         }
 
         const lights = getLights();
@@ -315,7 +325,9 @@ export default function SimulationPage() {
             drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MAX + 25, lights.E);
         } else {
             drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MIN - 25, lights.N);
-            drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MAX + 25, lights.W);
+            drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MAX + 25, lights.S);
+            drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MIN - 25, lights.W);
+            drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MAX + 25, lights.E);
         }
 
         vehiclesRef.current.forEach(v => {
@@ -347,19 +359,20 @@ export default function SimulationPage() {
                 if (t <= 1) {
                     setPhase(p => {
                         if (simMode === "2way") {
-                            if (p === "NS_GREEN") { setTimer(settings.yellowDuration); return "NS_YELLOW"; }
-                            if (p === "NS_YELLOW") { setTimer(2); return "ALL_RED_1"; }
-                            if (p === "ALL_RED_1") { setTimer(settings.greenDuration); return "WE_GREEN"; }
-                            if (p === "WE_GREEN") { setTimer(settings.yellowDuration); return "WE_YELLOW"; }
-                            if (p === "WE_YELLOW") { setTimer(2); return "ALL_RED_2"; }
-                            setTimer(settings.greenDuration); return "NS_GREEN";
+                            if (p === "2W_NS_GREEN") { setTimer(settings.yellowDuration); return "2W_NS_YELLOW"; }
+                            if (p === "2W_NS_YELLOW") { setTimer(2); return "ALL_RED"; }
+                            if (p === "ALL_RED" || p === "2W_WE_YELLOW") { setTimer(settings.greenDuration); return p === "2W_WE_YELLOW" ? "2W_NS_GREEN" : "2W_WE_GREEN"; }
+                            if (p === "2W_WE_GREEN") { setTimer(settings.yellowDuration); return "2W_WE_YELLOW"; }
+                            return "2W_NS_GREEN";
                         } else {
-                            if (p === "N_GREEN") { setTimer(settings.yellowDuration); return "N_YELLOW"; }
-                            if (p === "N_YELLOW") { setTimer(2); return "ALL_RED_1"; }
-                            if (p === "ALL_RED_1") { setTimer(settings.greenDuration); return "W_GREEN"; }
-                            if (p === "W_GREEN") { setTimer(settings.yellowDuration); return "W_YELLOW"; }
-                            if (p === "W_YELLOW") { setTimer(2); return "ALL_RED_2"; }
-                            setTimer(settings.greenDuration); return "N_GREEN";
+                            if (p === "1W_N_GREEN") { setTimer(settings.yellowDuration); return "1W_N_YELLOW"; }
+                            if (p === "1W_N_YELLOW") { setTimer(1); return "1W_S_GREEN"; }
+                            if (p === "1W_S_GREEN") { setTimer(settings.yellowDuration); return "1W_S_YELLOW"; }
+                            if (p === "1W_S_YELLOW") { setTimer(1); return "1W_W_GREEN"; }
+                            if (p === "1W_W_GREEN") { setTimer(settings.yellowDuration); return "1W_W_YELLOW"; }
+                            if (p === "1W_W_YELLOW") { setTimer(1); return "1W_E_GREEN"; }
+                            if (p === "1W_E_GREEN") { setTimer(settings.yellowDuration); return "1W_E_YELLOW"; }
+                            setTimer(settings.greenDuration); return "1W_N_GREEN";
                         }
                     });
                 }
@@ -371,8 +384,15 @@ export default function SimulationPage() {
 
     const togglePhase = () => {
         if (!isManual) return;
-        if (simMode === "2way") setPhase(p => p.startsWith("NS") ? "WE_GREEN" : "NS_GREEN");
-        else setPhase(p => p.startsWith("N") ? "W_GREEN" : "N_GREEN");
+        if (simMode === "2way") setPhase(p => p.startsWith("2W_NS") ? "2W_WE_GREEN" : "2W_NS_GREEN");
+        else {
+            setPhase(p => {
+                if (p.includes("N")) return "1W_S_GREEN";
+                if (p.includes("S")) return "1W_W_GREEN";
+                if (p.includes("W")) return "1W_E_GREEN";
+                return "1W_N_GREEN";
+            });
+        }
         setTimer(settings.greenDuration);
     };
 
@@ -403,16 +423,16 @@ export default function SimulationPage() {
                         <Card className="bg-black/40 border-white/5 p-4 space-y-4">
                             <div className="flex justify-between items-center"><span className="text-[10px] font-black uppercase text-zinc-500">{simMode === "1way" ? "1-Way Cycle" : "2-Way Cycle"}</span><div className="flex items-center gap-2 text-sky-400 font-mono text-xs"><Timer className="w-3 h-3" /> {timer}s</div></div>
                             <div className="space-y-2">
-                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith(simMode === "2way" ? "NS" : "N") ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline">
+                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.includes("NS") || phase.includes("_N_") || phase.includes("_S_") ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline">
                                     <div className="flex flex-col">
                                         <div className="text-[8px] font-black">PHASE A</div>
-                                        <div className="text-[10px]">{simMode === "2way" ? "NORTH ⇵ SOUTH" : "NORTH ➜ SOUTH"}</div>
+                                        <div className="text-[10px]">{simMode === "2way" ? "NORTH ⇵ SOUTH" : "VERTICAL FLOW"}</div>
                                     </div>
                                 </Button>
-                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith(simMode === "2way" ? "WE" : "W") ? 'bg-sky-500/10 text-sky-400 border-sky-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline">
+                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.includes("WE") || phase.includes("_W_") || phase.includes("_E_") ? 'bg-sky-500/10 text-sky-400 border-sky-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline">
                                     <div className="flex flex-col">
                                         <div className="text-[8px] font-black">PHASE B</div>
-                                        <div className="text-[10px]">{simMode === "2way" ? "WEST ⇄ EAST" : "WEST ➜ EAST"}</div>
+                                        <div className="text-[10px]">{simMode === "2way" ? "WEST ⇄ EAST" : "HORIZONTAL FLOW"}</div>
                                     </div>
                                 </Button>
                             </div>
