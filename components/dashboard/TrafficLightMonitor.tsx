@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Timer, ZapOff } from "lucide-react";
 
 const junctions = [
-    { id: 1, name: "แยกกรุงธนบุรี", status: "green", timer: 45, mode: "AI" },
-    { id: 2, name: "แยกเจริญนคร", status: "red", timer: 12, mode: "AI" },
-    { id: 3, name: "แยกตากสิน", status: "red", timer: 58, mode: "Fixed" },
-    { id: 4, name: "ทางด่วนขั้นที่ 1", status: "green", timer: 120, mode: "AI" },
+    { id: 1, name: "แยกอโศก (Sukhumvit)", status: "red", timer: 145, mode: "AI" },
+    { id: 2, name: "แยกสาทร-นราธิวาส", status: "red", timer: 82, mode: "AI" },
+    { id: 3, name: "แยกวิทยุ (Rama IV)", status: "green", timer: 45, mode: "AI" },
+    { id: 4, name: "แยกตากสิน", status: "green", timer: 120, mode: "Fixed" },
 ];
 
 export function TrafficLightMonitor() {
@@ -20,7 +20,7 @@ export function TrafficLightMonitor() {
                     <div key={j.id} className="group relative flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all cursor-pointer overflow-hidden">
                         {/* Status bar (Left) */}
                         <div className={`absolute left-0 top-0 bottom-0 w-1 ${j.status === 'green' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
-                        
+
                         <div className="flex flex-col gap-1 ml-2">
                             <span className="text-sm font-semibold text-white/90 group-hover:text-white transition-colors">{j.name}</span>
                             <div className="flex items-center gap-2">
