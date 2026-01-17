@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Traffic Assistance | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css shadow-sm">
+    <style>
+        .glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); }
+        .neon-border { border: 1px solid rgba(16, 185, 129, 0.3); }
+    </style>
+</head>
+<body class="bg-[#0b0e15] text-zinc-300 font-sans min-h-screen">
+    <nav class="border-b border-white/5 p-4 flex justify-between items-center bg-black/40">
+        <h1 class="text-xl font-black tracking-tighter text-white">SMART TRAFFIC <span class="text-emerald-500">ASSISTANCE</span></h1>
+        <div class="flex gap-4">
+            <span id="camera-status" class="text-[10px] font-bold bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded border border-emerald-500/20">CAMERA: ACTIVE</span>
+            <span id="fps-display" class="text-[10px] font-bold bg-sky-500/10 text-sky-400 px-2 py-1 rounded border border-sky-500/20">FPS: 0.0</span>
+        </div>
+    </nav>
+
+    <main class="p-8 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Video Feed Section -->
+        <div class="lg:col-span-2 space-y-4">
+            <div class="relative aspect-video rounded-2xl overflow-hidden border border-white/5 bg-black shadow-2xl">
+                <img id="video-feed" src="http://localhost:8000/video_feed" class="w-full h-full object-cover">
+                <div class="absolute inset-0 pointer-events-none border-[20px] border-black/20"></div>
+                <div class="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-[10px] border border-white/10 uppercase font-black">LIVE_STREAM_01</div>
+            </div>
+            
+            <div class="flex gap-4">
+                <button onclick="controlCamera('start')" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition shadow-lg shadow-emerald-900/20"><i class="fas fa-play mr-2"></i> START</button>
+                <button onclick="controlCamera('stop')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition border border-white/5"><i class="fas fa-pause mr-2"></i> STOP</button>
+                <button onclick="resetCounts()" class="flex-1 bg-rose-600/10 hover:bg-rose-600/20 text-rose-500 border border-rose-500/30 font-bold py-3 rounded-xl transition uppercase tracking-widest text-xs">Reset All</button>
+            </div>
+        </div>
+
+        <!-- Sidebar / Stats Section -->
+        <div class="space-y-6">
+            <div class="grid grid-cols-1 gap-4">
+                <div class="glass p-6 rounded-2xl border border-white/5 flex items-center gap-4">
+                    <div class="p-4 bg-emerald-500/10 rounded-xl"><i class="fas fa-car text-emerald-500 text-xl"></i></div>
+                    <div>
+                        <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest leading-none mb-1">Vehicles Counted</div>
+                        <div id="vehicle-count" class="text-4xl font-black text-white">0</div>
+                    </div>
+                </div>
+                <div class="glass p-6 rounded-2xl border border-white/5 flex items-center gap-4">
+                    <div class="p-4 bg-sky-500/10 rounded-xl"><i class="fas fa-user text-sky-400 text-xl"></i></div>
+                    <div>
+                        <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest leading-none mb-1">People Counted</div>
+                        <div id="person-count" class="text-4xl font-black text-white">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass p-6 rounded-2xl border border-white/5 space-y-4">
+                <h3 class="text-xs font-black uppercase tracking-widest text-zinc-500 mb-4"><i class="fas fa-sliders-h mr-2"></i> Line Settings</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-zinc-600 uppercase">Input X1</label>
+                        <input id="line-x1" type="number" value="0" class="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm focus:border-emerald-500 outline-none">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-zinc-600 uppercase">Input Y1</label>
+                        <input id="line-y1" type="number" value="300" class="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm focus:border-emerald-500 outline-none">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-zinc-600 uppercase">Input X2</label>
+                        <input id="line-x2" type="number" value="640" class="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm focus:border-emerald-500 outline-none">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-zinc-600 uppercase">Input Y2</label>
+                        <input id="line-y2" type="number" value="300" class="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm focus:border-emerald-500 outline-none">
+                    </div>
+                </div>
+                <button onclick="updateLine()" class="w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl border border-white/10 transition text-xs uppercase tracking-widest">Apply Line Configuration</button>
+                <p class="text-[9px] text-zinc-600 italic">Default line is horizontal at 300px height.</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+
+        async function pollStats() {
+            try {
+                const res = await fetch(`${API_URL}/stats`);
+                const data = await res.json();
+                document.getElementById('vehicle-count').innerText = data.vehicle;
+                document.getElementById('person-count').innerText = data.person;
+                document.getElementById('fps-display').innerText = `FPS: ${data.fps}`;
+                document.getElementById('camera-status').innerText = `CAMERA: ${data.camera.toUpperCase()}`;
+            } catch (e) { console.error("Poll error", e); }
+        }
+
+        async function controlCamera(action) {
+            await fetch(`${API_URL}/camera/${action}`, { method: 'POST' });
+        }
+
+        async function resetCounts() {
+            await fetch(`${API_URL}/reset_counts`, { method: 'POST' });
+        }
+
+        async function updateLine() {
+            const line = {
+                x1: parseInt(document.getElementById('line-x1').value),
+                y1: parseInt(document.getElementById('line-y1').value),
+                x2: parseInt(document.getElementById('line-x2').value),
+                y2: parseInt(document.getElementById('line-y2').value),
+            };
+            await fetch(`${API_URL}/settings/line`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(line)
+            });
+        }
+
+        setInterval(pollStats, 1000);
+    </script>
+</body>
+</html>
