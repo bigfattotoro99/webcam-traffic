@@ -5,6 +5,7 @@ import React, { useState, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { RoadDetailsDialog } from "./RoadDetailsDialog";
 import { useTrafficData } from "@/hooks/useTrafficData";
+import { WeatherWidget } from "./WeatherWidget";
 
 // Default center (Bangkok)
 const containerStyle = {
@@ -88,6 +89,7 @@ export function MapWrapper() {
                 onOpenChange={setIsDialogOpen}
                 roadData={selectedRoad}
             />
+            <WeatherWidget />
         </>
     );
 }
