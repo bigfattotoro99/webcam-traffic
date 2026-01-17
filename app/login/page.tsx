@@ -6,7 +6,7 @@ import { useAuthStore } from "@/lib/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { AlertCircle, Traffic } from "lucide-react";
+import { AlertCircle, TrafficCone } from "lucide-react";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -45,7 +45,7 @@ export default function LoginPage() {
                     {/* Header */}
                     <div className="text-center mb-8">
                         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/20 mb-4">
-                            <Traffic className="w-8 h-8 text-sky-400" />
+                            <TrafficCone className="w-8 h-8 text-sky-400" />
                         </div>
                         <h1 className="text-3xl font-black text-white tracking-tight mb-2">
                             Smart Traffic Assistance

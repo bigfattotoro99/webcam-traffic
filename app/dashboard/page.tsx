@@ -14,7 +14,7 @@ import {
     AlertTriangle,
     CheckCircle,
     Clock,
-    Traffic,
+    TrafficCone,
 } from "lucide-react";
 import { useNotificationStore } from "@/lib/store/notifications";
 
@@ -42,7 +42,7 @@ export default function DashboardPage() {
         {
             title: "Active Simulation",
             value: "4-Way",
-            icon: Traffic,
+            icon: TrafficCone,
             color: "text-sky-500",
             bgColor: "bg-sky-500/10",
             borderColor: "border-sky-500/20",
@@ -164,9 +164,9 @@ export default function DashboardPage() {
                                         className="flex items-center gap-3 p-3 bg-black/20 border border-white/5 rounded-lg hover:border-white/10 transition-colors"
                                     >
                                         <div className={`p-2 rounded-lg ${notif.type === 'congestion' ? 'bg-amber-500/10 text-amber-400' :
-                                                notif.type === 'accident' ? 'bg-red-500/10 text-red-400' :
-                                                    notif.type === 'emergency' ? 'bg-blue-500/10 text-blue-400' :
-                                                        'bg-sky-500/10 text-sky-400'
+                                            notif.type === 'accident' ? 'bg-red-500/10 text-red-400' :
+                                                notif.type === 'emergency' ? 'bg-blue-500/10 text-blue-400' :
+                                                    'bg-sky-500/10 text-sky-400'
                                             }`}>
                                             <AlertTriangle className="w-4 h-4" />
                                         </div>

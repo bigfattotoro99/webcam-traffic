@@ -11,7 +11,7 @@ import {
     Bell,
     Settings,
     LogOut,
-    Traffic,
+    TrafficCone,
     User,
 } from "lucide-react";
 
@@ -37,7 +37,7 @@ export function Navigation() {
             {/* Brand */}
             <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-500/20">
-                    <Traffic className="w-5 h-5 text-sky-400" />
+                    <TrafficCone className="w-5 h-5 text-sky-400" />
                 </div>
                 <div>
                     <h1 className="text-sm font-black text-white uppercase tracking-tight">
@@ -61,8 +61,8 @@ export function Navigation() {
                                 variant="ghost"
                                 size="sm"
                                 className={`gap-2 ${isActive
-                                        ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
-                                        : "text-zinc-400 hover:text-white hover:bg-white/5"
+                                    ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                                    : "text-zinc-400 hover:text-white hover:bg-white/5"
                                     }`}
                             >
                                 <Icon className="w-4 h-4" />
