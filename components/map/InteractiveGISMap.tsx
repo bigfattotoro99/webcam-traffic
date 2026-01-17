@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, Circle } from
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ZoneId } from "./ZoneSelector";
+import { Badge } from "@/components/ui/badge";
 
 // Fix for default Leaflet icons in Next.js
 const DefaultIcon = L.icon({
