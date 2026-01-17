@@ -143,50 +143,82 @@ export default function SimulationPage() {
                 }
             }
 
-            // Collision Logic - Enhanced Solid Block Engine
-            const inFront = vehiclesRef.current.find(o =>
-                o.laneId === v.laneId &&
-                (v.direction === "N" ? o.y > v.y : o.x > v.x) &&
-                Math.abs(v.direction === "N" ? o.y - v.y : o.x - v.x) < 250 // Increased lookahead
-            );
+            // --- Collision Logic (Strict Solid Block) ---
+
+            // 1. Same-Lane Closest Leader
+            let inFront: Vehicle | null = null;
+            let minGapInLane = 1000;
+
+            vehiclesRef.current.forEach(o => {
+                if (o.id === v.id || o.laneId !== v.laneId) return;
+                const gap = v.direction === "N" ? o.y - v.y : o.x - v.x;
+                if (gap > 0 && gap < minGapInLane) {
+                    minGapInLane = gap;
+                    inFront = o;
+                }
+            });
 
             if (inFront) {
-                const gap = v.direction === "N" ? inFront.y - v.y : inFront.x - v.x;
-                const totalLength = v.width / 2 + inFront.width / 2;
-                const actualGap = gap - totalLength;
-
+                const actualGap = minGapInLane - (v.width / 2 + (inFront as Vehicle).width / 2);
                 if (actualGap < settings.minGap) {
                     shouldStop = true;
-                    // Set speed to match the leader if the leader is moving, or stop if leader is stopped
-                    targetSpeed = Math.min(targetSpeed, inFront.speed);
+                    targetSpeed = Math.min(targetSpeed, (inFront as Vehicle).speed);
                 } else if (actualGap < settings.minGap + 40) {
-                    // Gradual braking
                     const brakeFactor = (actualGap - settings.minGap) / 40;
-                    targetSpeed = Math.min(targetSpeed, inFront.speed + (v.targetSpeed - inFront.speed) * brakeFactor);
+                    targetSpeed = Math.min(targetSpeed, (inFront as Vehicle).speed + (v.targetSpeed - (inFront as Vehicle).speed) * brakeFactor);
                 }
             }
 
-            // Movement and Physics
+            // 2. Cross-Lane Intersection Safety (If in or approaching intersection)
+            const isInIntersection = (x: number, y: number) => x > INTERSECTION_MIN - 20 && x < INTERSECTION_MAX + 20 && y > INTERSECTION_MIN - 20 && y < INTERSECTION_MAX + 20;
+
+            if (isInIntersection(v.x, v.y) || distToLine < 50) {
+                vehiclesRef.current.forEach(o => {
+                    if (o.id === v.id || o.laneId === v.laneId) return; // Same lane handled above
+
+                    const dx = Math.abs(o.x - v.x);
+                    const dy = Math.abs(o.y - v.y);
+
+                    // Simple AABB collision check for safety
+                    const combinedHalfWidth = (v.direction === "N" ? v.height : v.width) / 2 + (o.direction === "N" ? o.height : o.width) / 2;
+                    const combinedHalfHeight = (v.direction === "N" ? v.width : v.height) / 2 + (o.direction === "N" ? o.width : o.height) / 2;
+
+                    if (dx < combinedHalfWidth + 10 && dy < combinedHalfHeight + 10) {
+                        // If someone is in my path in the intersection, I should slow down/stop
+                        // Priority: North-South (Arbitrary or based on entry time)
+                        if (v.direction === "E" && o.direction === "N") {
+                            shouldStop = true;
+                        }
+                    }
+                });
+            }
+
+            // --- Physics & Movement ---
             if (shouldStop) {
-                v.speed = Math.max(0, v.speed - 0.25); // Hard brake
+                v.speed = Math.max(0, v.speed - 0.25);
                 v.state = "stopped";
             } else {
-                if (v.speed < targetSpeed) {
-                    v.speed = Math.min(targetSpeed, v.speed + 0.1); // Accelerate
-                } else {
-                    v.speed = Math.max(targetSpeed, v.speed - 0.2); // Decelerate to target
-                }
+                if (v.speed < targetSpeed) v.speed = Math.min(targetSpeed, v.speed + 0.1);
+                else v.speed = Math.max(targetSpeed, v.speed - 0.2);
                 v.state = v.speed > 0.1 ? "moving" : "stopped";
             }
 
-            // Strict Barrier: Prevent snapping into the car ahead
-            if (inFront) {
-                const nextPos = v.direction === "N" ? v.y + v.speed : v.x + v.speed;
-                const distToFrontNext = (v.direction === "N" ? inFront.y : inFront.x) - (nextPos + v.width / 2);
-                if (distToFrontNext < settings.minGap - 2) {
-                    v.speed = 0; // Immediate stop if movement would violate gap
-                    v.state = "stopped";
-                }
+            // --- Frame-Ahead Protective Stop ---
+            const nextX = v.direction === "E" ? v.x + v.speed : v.x;
+            const nextY = v.direction === "N" ? v.y + v.speed : v.y;
+
+            const willCollide = vehiclesRef.current.some(o => {
+                if (o.id === v.id) return false;
+                const dx = Math.abs(o.x - nextX);
+                const dy = Math.abs(o.y - nextY);
+                const minX = (v.direction === "N" ? v.height : v.width) / 2 + (o.direction === "N" ? o.height : o.width) / 2 + 5;
+                const minY = (v.direction === "N" ? v.width : v.height) / 2 + (o.direction === "N" ? o.width : o.height) / 2 + 5;
+                return dx < minX && dy < minY;
+            });
+
+            if (willCollide && v.speed > 0) {
+                v.speed = 0;
+                v.state = "stopped";
             }
 
             if (v.direction === "N") v.y += v.speed; else if (v.direction === "E") v.x += v.speed;
