@@ -1,0 +1,334 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Smart Traffic Assistance (Thailand)</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+        }
+
+        .wrap {
+            display: grid;
+            grid-template-columns: 520px 1fr;
+            height: 100vh;
+        }
+
+        .left {
+            padding: 20px;
+            border-right: 1px solid #1e293b;
+            overflow-y: auto;
+            background: #1e293b;
+        }
+
+        .card {
+            background: #334155;
+            border: 1px solid #475569;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .hint {
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-top: 5px;
+        }
+
+        .title {
+            font-weight: 700;
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #38bdf8;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .num-box {
+            text-align: center;
+            background: #1e293b;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .num {
+            font-size: 28px;
+            font-weight: 800;
+            display: block;
+        }
+
+        .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #64748b;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .badge-HIGH {
+            background: #ef4444;
+            color: white;
+        }
+
+        .badge-MED {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .badge-LOW {
+            background: #10b981;
+            color: white;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+            margin-top: 10px;
+            height: 180px;
+            object-fit: cover;
+        }
+
+        h1 {
+            font-size: 22px;
+            margin: 0 0 20px 0;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        .status-dot.online {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="left">
+            <h1>
+                <div id="statusDot" class="status-dot"></div>
+                Smart Traffic Dashboard
+            </h1>
+
+            <div id="roadCards"></div>
+
+            <div class="card">
+                <div class="title">Color coding System</div>
+                <div class="hint">
+                    Real-time color calculation based on vehicle density (2s moving average):
+                    <ul style="margin: 8px 0; padding-left: 20px;">
+                        <li style="color: #ef4444;">Red (High): ≥ <span id="thRed">25</span></li>
+                        <li style="color: #f59e0b;">Yellow (Medium): ≥ <span id="thYellow">10</span></li>
+                        <li style="color: #10b981;">Green (Low): &lt; 10</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div id="map"></div>
+    </div>
+
+    <script>
+        // Configuration for 5 roads
+        const ROUTES_CONFIG = [
+            {
+                id: "krungthonburi",
+                name: "Krung Thonburi Rd",
+                video: "./demo/cctv_krungthonburi.mp4",
+                start: { lat: 13.7217, lng: 100.5015 },
+                end: { lat: 13.7248, lng: 100.5156 },
+            },
+            {
+                id: "charoenkrung",
+                name: "Charoen Krung Rd",
+                video: "./demo/cctv_charoenkrung.mp4",
+                start: { lat: 13.7049, lng: 100.5073 },
+                end: { lat: 13.7283, lng: 100.5272 },
+            },
+            {
+                id: "ratchawithi",
+                name: "Ratchawithi Rd",
+                video: "./demo/cctv_ratchawithi.mp4",
+                start: { lat: 13.7983, lng: 100.5207 },
+                end: { lat: 13.7637, lng: 100.5383 },
+            },
+            {
+                id: "rama9",
+                name: "Rama 9 Rd",
+                video: "./demo/cctv_rama9.mp4",
+                start: { lat: 13.7507, lng: 100.6106 },
+                end: { lat: 13.7538, lng: 100.5677 },
+            },
+            {
+                id: "asokdindaeng",
+                name: "Asok–Din Daeng",
+                video: "./demo/cctv_asokdindaeng.mp4",
+                start: { lat: 13.7533, lng: 100.5631 },
+                end: { lat: 13.7640, lng: 100.5382 },
+            },
+        ];
+
+        let map;
+        let polylines = {};
+        const roadData = {};
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 13.74, lng: 100.55 },
+                zoom: 13,
+                styles: [
+                    { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+                    { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
+                    { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
+                    { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+                    { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
+                    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
+                    { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] }
+                ]
+            });
+
+            const directionsService = new google.maps.DirectionsService();
+
+            ROUTES_CONFIG.forEach(r => {
+                // Create initial UI cards
+                createRoadCard(r);
+
+                // Draw route on map
+                directionsService.route({
+                    origin: r.start,
+                    destination: r.end,
+                    travelMode: 'DRIVING'
+                }, (result, status) => {
+                    if (status === 'OK') {
+                        polylines[r.id] = new google.maps.Polyline({
+                            path: result.routes[0].overview_path,
+                            geodesic: true,
+                            strokeColor: "#10b981", // Initial green
+                            strokeOpacity: 0.8,
+                            strokeWeight: 8,
+                            map: map
+                        });
+                    }
+                });
+            });
+
+            initWebSocket();
+        }
+
+        function createRoadCard(r) {
+            const container = document.getElementById("roadCards");
+            const html = `
+        <div class="card" id="card-${r.id}">
+          <div class="row">
+            <div class="title" style="margin:0">${r.name}</div>
+            <div id="badge-${r.id}" class="badge badge-LOW">Low (Green)</div>
+          </div>
+          <div class="grid">
+            <div class="num-box">
+              <span id="v-${r.id}" class="num">0</span>
+              <span class="label">Vehicles</span>
+            </div>
+            <div class="num-box">
+              <span id="p-${r.id}" class="num">0</span>
+              <span class="label">People</span>
+            </div>
+          </div>
+          <video id="vid-${r.id}" autoplay muted loop src="${r.video}"></video>
+        </div>
+      `;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function initWebSocket() {
+            const ws = new WebSocket(`ws://${location.hostname}:8000/ws`);
+
+            ws.onopen = () => {
+                document.getElementById("statusDot").classList.add("online");
+                console.log("WebSocket Connected");
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.roads) {
+                    Object.keys(data.roads).forEach(id => {
+                        const r = data.roads[id];
+                        updateUI(id, r);
+                        updateMap(id, r.level);
+                    });
+                }
+                if (data.thresholds) {
+                    document.getElementById("thRed").innerText = data.thresholds.red;
+                    document.getElementById("thYellow").innerText = data.thresholds.yellow;
+                }
+            };
+
+            ws.onclose = () => {
+                document.getElementById("statusDot").classList.remove("online");
+                console.log("WebSocket Disconnected. Retrying in 2s...");
+                setTimeout(initWebSocket, 2000);
+            };
+        }
+
+        function updateUI(id, road) {
+            document.getElementById(`v-${id}`).innerText = road.counts_smooth.vehicles;
+            document.getElementById(`p-${id}`).innerText = road.counts_smooth.people;
+
+            const badge = document.getElementById(`badge-${id}`);
+            badge.className = `badge badge-${road.level}`;
+            badge.innerText = road.level === "HIGH" ? "High (Red)" : (road.level === "MED" ? "Medium (Yellow)" : "Low (Green)");
+        }
+
+        function updateMap(id, level) {
+            if (polylines[id]) {
+                let color = "#10b981"; // green
+                if (level === "HIGH") color = "#ef4444"; // red
+                else if (level === "MED") color = "#f59e0b"; // yellow
+                polylines[id].setOptions({ strokeColor: color });
+            }
+        }
+    </script>
+    <!-- Replace YOUR_API_KEY with your actual Google Maps API Key -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap"></script>
+</body>
+
+</html>
