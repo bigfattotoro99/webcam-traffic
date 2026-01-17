@@ -5,8 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Wifi, Navigation, Maximize2, Zap } from "lucide-react";
 import { CCTVPreview } from "./CCTVPreview";
+import { ZoneId } from "./ZoneSelector";
 
-export function FallbackMap() {
+export function FallbackMap({ zone = "krungthon" }: { zone?: ZoneId }) {
     // Simulated Time
     const [time, setTime] = useState<Date | null>(null);
     const [mounted, setMounted] = useState(false);
@@ -39,16 +40,18 @@ export function FallbackMap() {
             <div className="absolute top-6 left-6 z-30 flex flex-col gap-3">
                 <Badge variant="outline" className="w-fit bg-emerald-500/10 text-emerald-400 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.3)] backdrop-blur-md px-3 py-1">
                     <Wifi className="w-3 h-3 mr-2 animate-pulse" />
-                    การส่งผ่านข้อมูลเรียลไทม์ • เชื่อมต่อแล้ว
+                    🛰️ SATELLITE_UPLINK_LIVE ({zone.toUpperCase()})
                 </Badge>
                 <div className="glass p-5 rounded-2xl border border-white/20 shadow-2xl space-y-2 max-w-[280px]">
                     <h3 className="font-bold text-xl tracking-tight flex items-center gap-2 text-white">
                         <Navigation className="w-5 h-5 text-sky-400" />
-                        ศูนย์ควบคุมกรุงเทพฯ
+                        {zone === 'krungthon' ? 'แยกกรุงธนบุรี' :
+                            zone === 'sukhumvit' ? 'อโศก - สุขุมวิท' :
+                                zone === 'sathon' ? 'สาทร - สีลม' : 'พระราม 4'}
                     </h3>
                     <div className="flex flex-col gap-1">
-                        <p className="text-[10px] text-sky-300/60 font-mono tracking-widest uppercase">พิกัดศูนย์กลาง</p>
-                        <p className="text-sm text-sky-100/90 font-mono">13.7563° N, 100.5018° E</p>
+                        <p className="text-[10px] text-sky-300/60 font-mono tracking-widest uppercase text-xs">พิกัดจำลองโซน</p>
+                        <p className="text-sm text-sky-100/90 font-mono uppercase italic">{zone}_CORE_DATA_NODE</p>
                     </div>
                     <div className="pt-2 border-t border-white/10 flex items-center justify-between">
                         <span className="text-[10px] text-zinc-400 font-medium">เวลาปัจจุบันระบบ</span>
@@ -57,106 +60,50 @@ export function FallbackMap() {
                 </div>
             </div>
 
-            {/* 4. FLOATING CCTV PREVIEWS */}
-            <div className="absolute top-6 right-6 z-30 flex flex-col gap-4">
-                <CCTVPreview name="SK-01 Asoke" status="online" className="rotate-1 hover:rotate-0 transition-transform duration-500" />
-                <CCTVPreview name="ST-02 Sathon" status="online" className="-rotate-1 hover:rotate-0 transition-transform duration-500 delay-75" />
-            </div>
-
-            {/* 5. INTERACTIVE 3D SVG ROADS NETWORK */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none perspective-1000">
-                <svg viewBox="0 0 800 600" className="w-full h-full object-cover drop-shadow-[0_20px_50px_rgba(0,0,0,1)]">
-                    <defs>
-                        <linearGradient id="roadGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                            <stop offset="0%" stopColor="rgba(30,41,59,0.1)" />
-                            <stop offset="50%" stopColor="rgba(255,255,255,0.05)" />
-                            <stop offset="100%" stopColor="rgba(30,41,59,0.1)" />
-                        </linearGradient>
-                    </defs>
-
-                    {/* MAIN ROADS NETWORK */}
-                    {/* Sukhumvit (Main Horizontal-ish) */}
-                    <path d="M -50 250 L 850 250" stroke="url(#roadGrad)" strokeWidth="50" fill="none" opacity="0.3" />
-                    {/* Sathon / Rama 4 (Intersections) */}
-                    <path d="M 300 -50 L 300 650" stroke="url(#roadGrad)" strokeWidth="40" fill="none" opacity="0.3" />
-                    <path d="M 550 -50 L 550 650" stroke="url(#roadGrad)" strokeWidth="40" fill="none" opacity="0.3" />
-
-                    {/* Traffic Flow Paths */}
-                    {/* Sukhumvit Inbound (Red - Extreme Congestion) */}
-                    <path d="M 850 260 L -50 260" stroke="#ef4444" strokeWidth="6" fill="none" className="blur-[1px] opacity-40 shadow-[0_0_15px_#ef4444]" />
-                    {/* Sukhumvit Outbound (Green) */}
-                    <path d="M -50 240 L 850 240" stroke="#10b981" strokeWidth="6" fill="none" className="blur-[1px] opacity-40 shadow-[0_0_15px_#10b981]" />
-
-                    {/* Animated Particles (Vehicles) */}
-                    {/* Heavy Inbound Sukhumvit */}
-                    <g>
-                        {[0, 0.4, 1.2, 1.8, 2.5, 3.2, 4.5, 5.8, 7].map((d, i) => (
-                            <circle key={`in-${i}`} r="3" fill="#ef4444" className="shadow-[0_0_10px_#ef4444]">
-                                <animateMotion dur="20s" repeatCount="indefinite" begin={`${d}s`} path="M 850 260 L -50 260" />
-                            </circle>
-                        ))}
+            {/* 4. CLEAN SVG ROADS */}
+            <div className="absolute inset-0 flex items-center justify-center p-20 pointer-events-none">
+                <svg viewBox="0 0 800 600" className="w-full h-full">
+                    {/* Roads */}
+                    <g stroke="#1e293b" strokeWidth="36" fill="none" strokeLinecap="round" opacity="0.4">
+                        {zone === 'krungthon' || zone === 'sukhumvit' ? (
+                            <><path d="M 100 300 L 700 300" /><path d="M 400 100 L 400 500" /></>
+                        ) : (
+                            <><path d="M 150 150 L 650 450" /><path d="M 150 450 L 650 150" /></>
+                        )}
                     </g>
-
-                    {/* Smooth Outbound */}
-                    <g>
-                        {[0, 1.5, 3, 4.5].map((d, i) => (
-                            <circle key={`out-${i}`} r="2.5" fill="#fff" className="shadow-[0_0_8px_#fff]">
-                                <animateMotion dur="5s" repeatCount="indefinite" begin={`${d}s`} path="M -50 240 L 850 240" />
-                            </circle>
-                        ))}
+                    {/* Traffic */}
+                    <g fill="none" strokeWidth="4" strokeLinecap="round">
+                        {zone === 'krungthon' && (
+                            <><path d="M 100 285 L 700 285" stroke="#10b981" /><path d="M 700 315 L 100 315" stroke="#ef4444" strokeWidth="6" />
+                                {[0, 1, 2, 3].map(d => <circle key={d} r="2.5" fill="#fff"><animateMotion dur="4s" repeatCount="indefinite" begin={`${d}s`} path="M 100 285 L 700 285" /></circle>)}</>
+                        )}
+                        {zone === 'sukhumvit' && (
+                            <><path d="M 100 300 L 700 300" stroke="#ef4444" strokeWidth="8" />
+                                {[0, 0.5, 1, 1.5, 2, 2.5].map(d => <circle key={d} r="4" fill="#ef4444"><animateMotion dur="12s" repeatCount="indefinite" begin={`${d}s`} path="M 700 300 L 100 300" /></circle>)}</>
+                        )}
+                        {zone === 'sathon' && (
+                            <><path d="M 150 150 L 650 450" stroke="#fbbf24" strokeWidth="6" />
+                                {[0, 2, 4].map(d => <circle key={d} r="4" fill="#fff"><animateMotion dur="6s" repeatCount="indefinite" begin={`${d}s`} path="M 150 150 L 650 450" /></circle>)}</>
+                        )}
+                        {zone === 'rama4' && (
+                            <><path d="M 150 450 L 650 150" stroke="#10b981" strokeWidth="6" />
+                                {[0, 1.5, 3].map(d => <circle key={d} r="4" fill="#fff"><animateMotion dur="5s" repeatCount="indefinite" begin={`${d}s`} path="M 150 450 L 650 150" /></circle>)}</>
+                        )}
                     </g>
                 </svg>
             </div>
 
-            {/* 6. BOTTOM HUD PANELS (Bangkok Hotspots) */}
-            <div className="absolute bottom-6 right-6 z-30 flex items-end gap-4 origin-bottom-right">
-                <Card className="glass p-5 w-72 border-white/20 shadow-2xl">
-                    <div className="flex justify-between items-center mb-4">
-                        <span className="text-[10px] font-bold text-sky-300 uppercase tracking-widest leading-none">ดัชนีจราจรกรุงเทพฯ</span>
-                        <Badge variant="destructive" className="text-[8px] h-4">วิกฤต</Badge>
-                    </div>
-                    <div className="space-y-4">
-                        {[
-                            { name: "ถ.สุขุมวิท (อโศก)", density: 98, color: "bg-red-500" },
-                            { name: "ถ.สาทรตอนใต้", density: 82, color: "bg-red-500" },
-                            { name: "ถ.พระราม 4", density: 74, color: "bg-amber-500" },
-                            { name: "สะพานตากสิน", density: 88, color: "bg-red-500" },
-                        ].map((road) => (
-                            <div key={road.name} className="space-y-1.5">
-                                <div className="flex justify-between text-[9px] font-medium text-white/50 tracking-wide">
-                                    <span>{road.name}</span>
-                                    <span className={road.density > 80 ? "text-red-400" : "text-amber-400"}>{road.density}%</span>
-                                </div>
-                                <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                    <div className={`${road.color} h-full transition-all duration-1000 shadow-[0_0_10px_rgba(0,0,0,0.5)]`} style={{ width: `${road.density}%` }}></div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                    <p className="mt-4 text-[8px] text-zinc-500 text-center uppercase tracking-tighter">อัปเดตข้อมูลทุก 60 วินาทีจากกองบังคับการตำรวจจราจร</p>
-                </Card>
-
-                <Card className="glass p-4 w-56 border-white/20 shadow-2xl backdrop-blur-xl">
-                    <div className="flex justify-between items-center mb-3">
-                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">การควบคุมด้วย AI</span>
-                        <Zap className="h-3 w-3 text-yellow-400 animate-bounce" />
-                    </div>
-                    <div className="flex items-start gap-3">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500 animate-ping mt-1"></div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-xs text-white/90 font-medium">ปรับรอบสัญญาณไฟ</span>
-                            <span className="text-[9px] text-emerald-300/60 leading-tight italic">เปิดไฟเขียว Sukhumvit Inbound เพิ่มขึ้น +45วิ เพื่อระบายรถสะสมจากแยกอโศก</span>
-                        </div>
-                    </div>
-                </Card>
+            {/* STATUS HUD */}
+            <div className="absolute bottom-10 left-10 z-30 flex items-center gap-3">
+                <div className="glass px-4 py-2 rounded-2xl border-white/10 text-[10px] font-mono text-emerald-400 flex items-center gap-3 shadow-2xl">
+                    <div className="h-2 w-2 rounded-full bg-emerald-500 animate-ping"></div>
+                    SYSTEM_STABLE • LATENCY: 12ms • AI_OPTIMIZED • {zone.toUpperCase()}_NODE
+                </div>
             </div>
 
-            {/* HUD SCALE / QUALITY INDICATOR */}
-            <div className="absolute bottom-6 left-6 z-30 flex flex-col gap-2">
-                <div className="glass px-3 py-1.5 rounded-full border-white/10 text-[9px] font-mono text-white/50 flex items-center gap-2">
-                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                    SATELLITE HDR ACTIVE • LATENCY 12ms
-                </div>
+            {/* FLOATING CCTV Small */}
+            <div className="absolute top-6 right-6 z-30">
+                <CCTVPreview name={`CAM-${zone.toUpperCase()}-01`} status="online" />
             </div>
         </div>
     );

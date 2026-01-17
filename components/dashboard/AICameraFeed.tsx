@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Scan, User, Car as CarIcon, Video, ShieldCheck } from "lucide-react";
+import { ZoneId } from "../map/ZoneSelector";
 
 interface DetectedObject {
     id: number;
@@ -16,15 +17,17 @@ interface DetectedObject {
     color?: string;
 }
 
-export function AICameraFeed() {
+export function AICameraFeed({ zone = "krungthon" }: { zone?: ZoneId }) {
     const [objects, setObjects] = useState<DetectedObject[]>([]);
     const [counts, setCounts] = useState({ cars: 0, people: 0 });
+    const [logs, setLogs] = useState<string[]>(["INIT 0x0... SYSTEM_READY"]);
 
     useEffect(() => {
         // Simulation loop
         const interval = setInterval(() => {
             const newObjects: DetectedObject[] = [];
             const objCount = Math.floor(Math.random() * 6) + 3;
+            const newLogs: string[] = [];
 
             for (let i = 0; i < objCount; i++) {
                 const rand = Math.random();
@@ -39,6 +42,7 @@ export function AICameraFeed() {
                     type = "bus";
                 }
 
+                const confidence = Math.round(Math.random() * 10 + 88);
                 newObjects.push({
                     id: Math.random(),
                     type,
@@ -47,11 +51,16 @@ export function AICameraFeed() {
                     y: Math.random() * 55 + 25,
                     width: type === "bus" ? 22 : (type === "car" || type === "taxi" ? 14 : 4),
                     height: type === "bus" ? 8 : (type === "car" || type === "taxi" ? 8 : 10),
-                    confidence: Math.round(Math.random() * 10 + 88),
+                    confidence,
                 });
+
+                if (Math.random() > 0.7) {
+                    newLogs.push(`[${new Date().toLocaleTimeString()}] TRK_${type.toUpperCase()} val=${confidence}%`);
+                }
             }
 
             setObjects(newObjects);
+            setLogs(prev => [...newLogs, ...prev].slice(0, 10));
             setCounts(prev => ({
                 cars: prev.cars + (Math.random() > 0.6 ? 1 : 0),
                 people: prev.people + (Math.random() > 0.8 ? 1 : 0),
@@ -80,13 +89,17 @@ export function AICameraFeed() {
                     {/* Realistic Background - Road Surface */}
                     <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1542361345-89e58247f2d1?q=80&w=3270&auto=format&fit=crop')] bg-cover bg-center grayscale contrast-150 opacity-30"></div>
 
-                    {/* Motion Blur Overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20"></div>
+                    {/* Floating HUD Indicators */}
+                    <div className="absolute inset-0 pointer-events-none border border-emerald-500/10 m-2 z-20"></div>
+                    <div className="absolute top-2 left-2 text-[8px] font-mono text-emerald-500/40 z-20">FR_INDEX: 489230</div>
+                    <div className="absolute bottom-2 left-2 text-[8px] font-mono text-emerald-500/40 z-20">ISO: 400 • 1/120s</div>
 
                     {/* HUD: ZONE Box matching user screenshot */}
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
-                        <div className="bg-black/90 text-white text-base font-bold px-6 py-2 rounded-xl border border-white/20 shadow-2xl backdrop-blur-xl tracking-wide uppercase">
-                            ZONE: Krung Thon Buri 01
+                        <div className="bg-black/90 text-white text-xs font-bold px-4 py-1.5 rounded-lg border border-white/20 shadow-2xl backdrop-blur-xl tracking-wide uppercase">
+                            ZONE: {zone === 'krungthon' ? 'Krung Thon Buri 01' :
+                                zone === 'sukhumvit' ? 'Sukhumvit 21 (Asoke)' :
+                                    zone === 'sathon' ? 'Sathon-Naradhiwas' : 'Rama IV Junction'}
                         </div>
                     </div>
 
@@ -94,7 +107,7 @@ export function AICameraFeed() {
                     {objects.map((obj) => (
                         <div
                             key={obj.id}
-                            className={`absolute transition-all duration-1000 ease-in-out flex flex-col items-center justify-center`}
+                            className={`absolute transition-all duration-1000 ease-in-out flex flex-col items-center justify-center z-10`}
                             style={{
                                 left: `${obj.x}%`,
                                 top: `${obj.y}%`,
@@ -102,7 +115,6 @@ export function AICameraFeed() {
                                 height: `${obj.height}%`,
                             }}
                         >
-                            {/* Realistic Car Body / Placeholder */}
                             <div
                                 className={`w-full h-full rounded-sm border-[1.5px] shadow-[0_0_10px_rgba(16,185,129,0.3)] transition-colors duration-500`}
                                 style={{
@@ -110,7 +122,6 @@ export function AICameraFeed() {
                                     backgroundColor: obj.type === 'person' ? 'rgba(56,189,248,0.1)' : (obj.color ? `${obj.color}15` : 'rgba(16,185,129,0.1)'),
                                 }}
                             >
-                                {/* Detection Badge - Matching screenshot */}
                                 <div className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap">
                                     <Badge
                                         className="rounded-lg px-2 py-0.5 text-[10px] font-bold shadow-lg border-0 flex items-center gap-1.5"
@@ -120,38 +131,36 @@ export function AICameraFeed() {
                                         {obj.confidence}%
                                     </Badge>
                                 </div>
-
-                                {/* Corner markers */}
-                                <div className="absolute top-0 left-0 w-1.5 h-1.5 border-t-2 border-l-2" style={{ borderColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981') }}></div>
-                                <div className="absolute top-0 right-0 w-1.5 h-1.5 border-t-2 border-r-2" style={{ borderColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981') }}></div>
-                                <div className="absolute bottom-0 left-0 w-1.5 h-1.5 border-b-2 border-l-2" style={{ borderColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981') }}></div>
-                                <div className="absolute bottom-0 right-0 w-1.5 h-1.5 border-b-2 border-r-2" style={{ borderColor: obj.type === 'person' ? '#38bdf8' : (obj.color || '#10b981') }}></div>
                             </div>
                         </div>
                     ))}
 
-                    {/* Scanline & HUD Distort */}
                     <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.02),rgba(0,255,0,0.01),rgba(0,0,255,0.02))] bg-[size:100%_4px,4px_100%] opacity-10"></div>
                 </div>
 
+                {/* AI REAL-TIME DATA LOG (The "Conversion" part) */}
+                <div className="h-24 bg-black/80 font-mono text-[9px] p-2 text-emerald-500/60 overflow-hidden leading-[1.3] relative border-t border-white/5">
+                    <div className="absolute top-0 right-2 text-[7px] text-zinc-700 font-bold uppercase mt-1">Live_Stream</div>
+                    <div className="flex flex-col-reverse gap-0.5 animate-pulse">
+                        {logs.map((log, i) => (
+                            <p key={i} className={i === 0 ? "text-emerald-400 font-bold" : ""}>{log}</p>
+                        ))}
+                    </div>
+                </div>
+
                 {/* Info Bar */}
-                <div className="flex bg-black/40 border-t border-white/5 p-4 justify-between items-center backdrop-blur-md">
+                <div className="flex bg-black/40 border-t border-white/5 p-3 justify-between items-center shrink-0">
                     <div className="flex gap-4">
                         <div className="flex flex-col">
-                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest leading-none mb-1">สะสมยานพาหนะ</span>
-                            <span className="text-xl font-black text-white font-mono leading-none">{(1240 + counts.cars).toLocaleString()}</span>
-                        </div>
-                        <div className="h-8 w-px bg-white/10 self-center"></div>
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest leading-none mb-1">สะสมคนเดินเท้า</span>
-                            <span className="text-xl font-black text-white font-mono leading-none">{(340 + counts.people).toLocaleString()}</span>
+                            <span className="text-[9px] text-zinc-500 uppercase font-black tracking-widest leading-none mb-1">TOTAL_SIM</span>
+                            <span className="text-lg font-black text-white font-mono leading-none">{(1240 + counts.cars).toLocaleString()}</span>
                         </div>
                     </div>
                     <div className="text-right">
-                        <span className="text-[8px] text-emerald-500/80 font-bold block mb-1">AI CLOUD PROCESSING</span>
+                        <span className="text-[7px] text-emerald-500/60 font-black block mb-1">REALTIME_CONVERSION_ACTIVE</span>
                         <div className="flex gap-0.5 justify-end">
                             {[1, 1, 1, 1, 0.5].map((op, i) => (
-                                <div key={i} className="w-1.5 h-3 bg-emerald-500" style={{ opacity: op }}></div>
+                                <div key={i} className="w-1 h-2 bg-emerald-500/80" style={{ opacity: op }}></div>
                             ))}
                         </div>
                     </div>

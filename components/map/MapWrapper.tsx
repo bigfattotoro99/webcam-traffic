@@ -31,8 +31,41 @@ const coverageArea = [
 const libraries: ("places" | "geometry" | "drawing" | "visualization")[] = ["geometry", "visualization"];
 
 import { FallbackMap } from "./FallbackMap";
+import { ZoneId } from "./ZoneSelector";
 
-export function MapWrapper() {
+const zoneConfigs: Record<ZoneId, { center: { lat: number, lng: number }, coverage: any[] }> = {
+    krungthon: {
+        center: { lat: 13.7208, lng: 100.5018 },
+        coverage: [
+            { lat: 13.7150, lng: 100.4900 }, { lat: 13.7250, lng: 100.4900 },
+            { lat: 13.7250, lng: 100.5200 }, { lat: 13.7150, lng: 100.5200 },
+        ]
+    },
+    sukhumvit: {
+        center: { lat: 13.7367, lng: 100.5612 },
+        coverage: [
+            { lat: 13.7300, lng: 100.5500 }, { lat: 13.7450, lng: 100.5500 },
+            { lat: 13.7450, lng: 100.5750 }, { lat: 13.7300, lng: 100.5750 },
+        ]
+    },
+    sathon: {
+        center: { lat: 13.7199, lng: 100.5292 },
+        coverage: [
+            { lat: 13.7150, lng: 100.5200 }, { lat: 13.7250, lng: 100.5200 },
+            { lat: 13.7250, lng: 100.5400 }, { lat: 13.7150, lng: 100.5400 },
+        ]
+    },
+    rama4: {
+        center: { lat: 13.7233, lng: 100.5422 },
+        coverage: [
+            { lat: 13.7180, lng: 100.5350 }, { lat: 13.7280, lng: 100.5350 },
+            { lat: 13.7280, lng: 100.5550 }, { lat: 13.7180, lng: 100.5550 },
+        ]
+    }
+};
+
+export function MapWrapper({ currentZone = "krungthon" }: { currentZone?: ZoneId }) {
+    const config = zoneConfigs[currentZone];
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 
     // Check for missing or placeholder key
@@ -62,7 +95,7 @@ export function MapWrapper() {
     };
 
     if (isKeyInvalid) {
-        return <FallbackMap />;
+        return <FallbackMap zone={currentZone} />;
     }
 
     if (loadError) {
@@ -85,8 +118,8 @@ export function MapWrapper() {
         <>
             <GoogleMap
                 mapContainerStyle={containerStyle}
-                center={defaultCenter}
-                zoom={14}
+                center={config.center}
+                zoom={15}
                 onLoad={onLoad}
                 onUnmount={onUnmount}
                 options={{
@@ -103,7 +136,7 @@ export function MapWrapper() {
             >
                 {/* Coverage Area Boundary */}
                 <Polygon
-                    paths={coverageArea}
+                    paths={config.coverage}
                     options={{
                         fillColor: "#3b82f6", // Blue
                         fillOpacity: 0.1,
