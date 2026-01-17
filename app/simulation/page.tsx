@@ -143,17 +143,51 @@ export default function SimulationPage() {
                 }
             }
 
-            // Collision
-            const inFront = vehiclesRef.current.find(o => o.laneId === v.laneId && (v.direction === "N" ? o.y > v.y : o.x > v.x) && Math.abs(v.direction === "N" ? o.y - v.y : o.x - v.x) < 180);
+            // Collision Logic - Enhanced Solid Block Engine
+            const inFront = vehiclesRef.current.find(o =>
+                o.laneId === v.laneId &&
+                (v.direction === "N" ? o.y > v.y : o.x > v.x) &&
+                Math.abs(v.direction === "N" ? o.y - v.y : o.x - v.x) < 250 // Increased lookahead
+            );
+
             if (inFront) {
                 const gap = v.direction === "N" ? inFront.y - v.y : inFront.x - v.x;
-                const actualGap = gap - (v.width / 2 + inFront.width / 2);
-                if (actualGap < settings.minGap) shouldStop = true;
-                else if (actualGap < settings.minGap + 30) targetSpeed = Math.min(targetSpeed, (actualGap / (settings.minGap + 30)) * v.targetSpeed);
+                const totalLength = v.width / 2 + inFront.width / 2;
+                const actualGap = gap - totalLength;
+
+                if (actualGap < settings.minGap) {
+                    shouldStop = true;
+                    // Set speed to match the leader if the leader is moving, or stop if leader is stopped
+                    targetSpeed = Math.min(targetSpeed, inFront.speed);
+                } else if (actualGap < settings.minGap + 40) {
+                    // Gradual braking
+                    const brakeFactor = (actualGap - settings.minGap) / 40;
+                    targetSpeed = Math.min(targetSpeed, inFront.speed + (v.targetSpeed - inFront.speed) * brakeFactor);
+                }
             }
 
-            if (shouldStop) { v.speed = Math.max(0, v.speed - 0.2); v.state = "stopped"; }
-            else { v.speed = v.speed < targetSpeed ? Math.min(targetSpeed, v.speed + 0.08) : Math.max(targetSpeed, v.speed - 0.15); v.state = v.speed > 0.1 ? "moving" : "stopped"; }
+            // Movement and Physics
+            if (shouldStop) {
+                v.speed = Math.max(0, v.speed - 0.25); // Hard brake
+                v.state = "stopped";
+            } else {
+                if (v.speed < targetSpeed) {
+                    v.speed = Math.min(targetSpeed, v.speed + 0.1); // Accelerate
+                } else {
+                    v.speed = Math.max(targetSpeed, v.speed - 0.2); // Decelerate to target
+                }
+                v.state = v.speed > 0.1 ? "moving" : "stopped";
+            }
+
+            // Strict Barrier: Prevent snapping into the car ahead
+            if (inFront) {
+                const nextPos = v.direction === "N" ? v.y + v.speed : v.x + v.speed;
+                const distToFrontNext = (v.direction === "N" ? inFront.y : inFront.x) - (nextPos + v.width / 2);
+                if (distToFrontNext < settings.minGap - 2) {
+                    v.speed = 0; // Immediate stop if movement would violate gap
+                    v.state = "stopped";
+                }
+            }
 
             if (v.direction === "N") v.y += v.speed; else if (v.direction === "E") v.x += v.speed;
 
