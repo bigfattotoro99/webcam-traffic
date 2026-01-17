@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from "react-leaflet";
+import { useEffect, useState, useRef, useMemo } from "react";
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, Circle } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ZoneId } from "./ZoneSelector";
@@ -14,6 +14,12 @@ const DefaultIcon = L.icon({
     iconAnchor: [12, 41],
 });
 L.Marker.prototype.options.icon = DefaultIcon;
+
+const CarIcon = L.divIcon({
+    html: `<div style="width: 10px; height: 10px; background: #3b82f6; border: 1px solid white; border-radius: 2px;"></div>`,
+    className: 'custom-car-icon',
+    iconSize: [10, 10],
+});
 
 interface RoadSegment {
     id: string;
@@ -69,6 +75,26 @@ function ChangeView({ center, zoom }: { center: [number, number], zoom: number }
     return null;
 }
 
+function MovingVehicle({ segment, density }: { segment: RoadSegment, density: number }) {
+    const [pos, setPos] = useState<[number, number]>(segment.coords[0]);
+    const progressRef = useRef(Math.random());
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            progressRef.current = (progressRef.current + 0.002) % 1;
+            const start = segment.coords[0];
+            const end = segment.coords[segment.coords.length - 1];
+
+            const lat = start[0] + (end[0] - start[0]) * progressRef.current;
+            const lng = start[1] + (end[1] - start[1]) * progressRef.current;
+            setPos([lat, lng]);
+        }, 50);
+        return () => clearInterval(interval);
+    }, [segment]);
+
+    return <Marker position={pos} icon={CarIcon} />;
+}
+
 export default function InteractiveGISMap({ zone = "krungthon" }: { zone?: ZoneId }) {
     const [mounted, setMounted] = useState(false);
     const config = zoneGPSData[zone];
@@ -76,6 +102,17 @@ export default function InteractiveGISMap({ zone = "krungthon" }: { zone?: ZoneI
     useEffect(() => {
         setMounted(true);
     }, []);
+
+    const css = `
+        @keyframes pulse-red {
+            0% { transform: scale(1); opacity: 0.8; }
+            70% { transform: scale(3); opacity: 0; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+        .pulse-marker {
+            animation: pulse-red 2s infinite;
+        }
+    `;
 
     if (!mounted) return <div className="w-full h-full bg-slate-950 animate-pulse rounded-xl" />;
 
@@ -87,6 +124,7 @@ export default function InteractiveGISMap({ zone = "krungthon" }: { zone?: ZoneI
 
     return (
         <div className="w-full h-full min-h-[500px] relative rounded-xl overflow-hidden border border-white/10 shadow-2xl">
+            <style>{css}</style>
             <MapContainer
                 center={config.center}
                 zoom={config.zoom}
@@ -95,48 +133,64 @@ export default function InteractiveGISMap({ zone = "krungthon" }: { zone?: ZoneI
             >
                 <ChangeView center={config.center} zoom={config.zoom} />
 
-                {/* CartoDB Dark Matter Tiles */}
                 <TileLayer
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    attribution='&copy; OpenStreetMap contributors &copy; CARTO'
                 />
 
-                {/* Road Polylines with Density Colors */}
                 {config.roads.map((road) => (
-                    <Polyline
-                        key={road.id}
-                        positions={road.coords}
-                        pathOptions={{
-                            color: getDensityColor(road.density),
-                            weight: 8,
-                            opacity: 0.8,
-                            lineCap: "round",
-                        }}
-                    >
-                        <Popup>
-                            <div className="text-slate-900 font-bold">
-                                <p>{road.name}</p>
-                                <p>ระดับความหนาแน่น: {road.density}%</p>
-                            </div>
-                        </Popup>
-                    </Polyline>
+                    <div key={road.id}>
+                        <Polyline
+                            positions={road.coords}
+                            pathOptions={{
+                                color: getDensityColor(road.density),
+                                weight: 6,
+                                opacity: 0.7,
+                                lineCap: "round",
+                            }}
+                        >
+                            <Popup>
+                                <div className="text-slate-900 font-bold">
+                                    <p>{road.name}</p>
+                                    <p>Traffic Density: {road.density}%</p>
+                                </div>
+                            </Popup>
+                        </Polyline>
+
+                        {/* Pulse for high density */}
+                        {road.density > 80 && (
+                            <Circle
+                                center={road.coords[Math.floor(road.coords.length / 2)]}
+                                radius={50}
+                                pathOptions={{
+                                    fillColor: "#ef4444",
+                                    fillOpacity: 0.4,
+                                    color: "transparent",
+                                    className: "pulse-marker"
+                                }}
+                            />
+                        )}
+
+                        {/* Moving vehicles */}
+                        {mounted && [...Array(Math.floor(road.density / 20) + 1)].map((_, i) => (
+                            <MovingVehicle key={`${road.id}-car-${i}`} segment={road} density={road.density} />
+                        ))}
+                    </div>
                 ))}
 
-                {/* Traffic Light simulated marker at center */}
                 <Marker position={config.center}>
                     <Popup>
                         <div className="text-slate-900 font-bold">
-                            🚦 ระบบสัญญานไฟอัจฉริยะ (AI Control Active)
+                            🚥 SMART_NODE_01 (AI Management Active)
                         </div>
                     </Popup>
                 </Marker>
             </MapContainer>
 
-            {/* Interactive Controls Overlay */}
             <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
-                <div className="glass px-3 py-1.5 rounded-lg border-white/10 text-[10px] text-emerald-400 font-mono shadow-xl bg-slate-950/80 backdrop-blur-md">
-                    GPS_LOCK_ACTIVE: {config.center[0].toFixed(4)}, {config.center[1].toFixed(4)}
-                </div>
+                <Badge variant="outline" className="bg-slate-950/80 backdrop-blur-md border-emerald-500/30 text-emerald-400 font-mono text-[9px] uppercase tracking-widest px-3 py-1">
+                    GIS_PULSE_SYNC: [OK]
+                </Badge>
             </div>
         </div>
     );
