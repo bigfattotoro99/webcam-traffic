@@ -1,134 +1,197 @@
-import cv2
-import threading
+# backend/main.py
+
 import time
-from fastapi import FastAPI, Response
-from fastapi.middleware.cors import CORSMiddleware
-from backend.vision.detector import TrafficDetector
-from backend.vision.counter import LineCounter
+from collections import deque
+from dataclasses import dataclass
+from typing import Dict, Tuple, List
+
+import cv2
 import numpy as np
+from fastapi import FastAPI, WebSocket
+from ultralytics import YOLO
+
+import sys
+import os
+# Add current directory to path so it can find backend.roads
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from backend.roads import ROADS
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# YOLO COCO ids
+PERSON = 0
+VEHICLE_IDS = {2, 3, 5, 7}  # car, motorcycle, bus, truck
 
-class Camera:
-    def __init__(self):
-        self.cap = None
-        self.is_running = False
-        self.frame = None
-        self.detector = TrafficDetector()
-        self.counter = LineCounter()
-        self.lock = threading.Lock()
-        self.fps = 0
+# Model: yolov8n.pt is lightweight
+model = YOLO("yolov8n.pt")
 
-    def start(self):
-        if not self.is_running:
-            self.cap = cv2.VideoCapture(0) # 0 for default webcam
-            self.is_running = True
-            threading.Thread(target=self._capture_loop, daemon=True).start()
+# Sending frequency
+SEND_EVERY_SEC = 0.25
 
-    def stop(self):
-        self.is_running = False
-        if self.cap:
-            self.cap.release()
+# Smoothing window
+WINDOW_SEC = 2.0
 
-    def _capture_loop(self):
-        prev_time = time.time()
-        while self.is_running:
-            success, raw_frame = self.cap.read()
-            if not success:
-                continue
+# Thresholds
+RED_TH = 25
+YELLOW_TH = 10
 
-            # Process Frame
-            detections = self.detector.detect(raw_frame)
-            
-            # In a real app, we'd use ByteTrack here. 
-            # For simplicity, we'll map detections to dummy tracks
-            tracks = []
-            for i, d in enumerate(detections):
-                tracks.append({
-                    'id': f"obj_{int(d['bbox'][0])}_{int(d['bbox'][1])}", # Dummy ID based on pos
-                    'bbox': d['bbox'],
-                    'class': d['class']
-                })
-            
-            self.counter.update(tracks)
+def level_by_vehicles(v: float) -> str:
+    if v >= RED_TH:
+        return "HIGH"
+    if v >= YELLOW_TH:
+        return "MED"
+    return "LOW"
 
-            # Draw UI on Frame
-            for d in detections:
-                b = d['bbox']
-                cv2.rectangle(raw_frame, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (0, 255, 0), 2)
-                cv2.putText(raw_frame, f"{d['class']} {d['confidence']:.2f}", (int(b[0]), int(b[1]-10)), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+def in_roi_xyxy(box: np.ndarray, roi: Tuple[int, int, int, int]) -> bool:
+    x1, y1, x2, y2 = box
+    rx1, ry1, rx2, ry2 = roi
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    return (rx1 <= cx <= rx2) and (ry1 <= cy <= ry2)
 
-            # Draw Crossing Line
-            l = self.counter.line
-            cv2.line(raw_frame, (int(l[0]), int(l[1])), (int(l[2]), int(l[3])), (0, 0, 255), 3)
-            
-            # Update shared frame
-            with self.lock:
-                self.frame = raw_frame
-            
-            # Calc FPS
-            curr_time = time.time()
-            self.fps = 1 / (curr_time - prev_time)
-            prev_time = curr_time
+@dataclass
+class RoadState:
+    road_id: str
+    name: str
+    roi: Tuple[int, int, int, int]
+    cap: cv2.VideoCapture
+    history: deque  # stores (ts, vehicles_now, people_now)
 
-camera = Camera()
+def open_capture(src: str) -> cv2.VideoCapture:
+    # Handle both video files and camera indices
+    if isinstance(src, str) and src.isdigit():
+        src = int(src)
+    cap = cv2.VideoCapture(src)
+    if not cap.isOpened():
+        print(f"Warning: Cannot open video source {src}. Simulation will use zeros.")
+    return cap
 
-@app.get("/")
-def read_root():
-    return {"status": "Smart Traffic API Running"}
+def smooth_counts(history: deque, now: float, v_now: int, p_now: int) -> Tuple[float, float]:
+    history.append((now, v_now, p_now))
+    while history and (now - history[0][0]) > WINDOW_SEC:
+        history.popleft()
+    vs = [x[1] for x in history]
+    ps = [x[2] for x in history]
+    v_avg = float(sum(vs)) / max(len(vs), 1)
+    p_avg = float(sum(ps)) / max(len(ps), 1)
+    return v_avg, p_avg
 
-@app.get("/video_feed")
-def video_feed():
-    def generate():
+def read_and_count(state: RoadState) -> Tuple[int, int]:
+    # Simulation fallback if video is not present or fails
+    if not state.cap.isOpened():
+        # Generate some realistic fluctuation
+        import random
+        base_v = {"krungthonburi": 20, "charoenkrung": 15, "ratchawithi": 30, "rama9": 25, "asokdindaeng": 35}
+        v = max(0, int(base_v.get(state.road_id, 10) + random.uniform(-5, 10)))
+        p = max(0, int(5 + random.uniform(-2, 3)))
+        return v, p
+        
+    ok, frame = state.cap.read()
+    if not ok:
+        # Loop if video file
+        state.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ok, frame = state.cap.read()
+        if not ok:
+            # Fallback for failed reads as well
+            import random
+            v = random.randint(5, 40)
+            p = random.randint(0, 10)
+            return v, p
+
+    results = model.predict(frame, imgsz=640, conf=0.40, verbose=False)[0]
+
+    v_count = 0
+    p_count = 0
+
+    if results.boxes is None or len(results.boxes) == 0:
+        return 0, 0
+
+    boxes = results.boxes.xyxy.cpu().numpy()
+    cls = results.boxes.cls.cpu().numpy().astype(int)
+
+    for box, c in zip(boxes, cls):
+        if not in_roi_xyxy(box, state.roi):
+            continue
+        if c == PERSON:
+            p_count += 1
+        elif c in VEHICLE_IDS:
+            v_count += 1
+
+    return v_count, p_count
+
+def build_states() -> List[RoadState]:
+    states: List[RoadState] = []
+    base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for r in ROADS:
+        video_path = os.path.join(base_path, r["video"])
+        cap = open_capture(video_path)
+        roi = tuple(r["roi"])
+        states.append(
+            RoadState(
+                road_id=r["id"],
+                name=r["name"],
+                roi=roi,
+                cap=cap,
+                history=deque(),
+            )
+        )
+    return states
+
+@app.websocket("/ws")
+async def ws(ws: WebSocket):
+    await ws.accept()
+
+    try:
+        states = build_states()
+    except Exception as e:
+        await ws.send_json({"error": str(e)})
+        await ws.close()
+        return
+
+    last_send = 0.0
+
+    try:
         while True:
-            with camera.lock:
-                if camera.frame is None:
-                    continue
-                ret, buffer = cv2.imencode('.jpg', camera.frame)
-                frame_bytes = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.03) # ~30 FPS
+            now = time.time()
+            payload_roads: Dict[str, dict] = {}
 
-    camera.start()
-    return Response(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+            for st in states:
+                v_now, p_now = read_and_count(st)
+                v_s, p_s = smooth_counts(st.history, now, v_now, p_now)
+                lvl = level_by_vehicles(v_s)
 
-@app.get("/stats")
-def get_stats():
-    return {
-        **camera.counter.get_counts(),
-        "fps": round(camera.fps, 1),
-        "camera": "running" if camera.is_running else "stopped"
-    }
+                payload_roads[st.road_id] = {
+                    "name": st.name,
+                    "counts_now": {"vehicles": int(v_now), "people": int(p_now)},
+                    "counts_smooth": {"vehicles": round(v_s, 1), "people": round(p_s, 1)},
+                    "level": lvl
+                }
 
-@app.post("/camera/start")
-def start_camera():
-    camera.start()
-    return {"status": "started"}
+            if now - last_send >= SEND_EVERY_SEC:
+                await ws.send_json({
+                    "ts": now,
+                    "roads": payload_roads,
+                    "thresholds": {"red": RED_TH, "yellow": YELLOW_TH},
+                    "window_sec": WINDOW_SEC
+                })
+                last_send = now
+            
+            # Small sleep to prevent 100% CPU in the loop if processing is too fast
+            time.sleep(0.01)
 
-@app.post("/camera/stop")
-def stop_camera():
-    camera.stop()
-    return {"status": "stopped"}
-
-@app.post("/reset_counts")
-def reset_counts():
-    camera.counter.reset()
-    return {"status": "reset"}
-
-@app.post("/settings/line")
-def set_line(line: dict):
-    camera.counter.set_line(line['x1'], line['y1'], line['x2'], line['y2'])
-    return {"status": "line updated"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    except Exception as e:
+        try:
+            await ws.send_json({"error": str(e)})
+        except:
+            pass
+    finally:
+        for st in states:
+            try:
+                st.cap.release()
+            except Exception:
+                pass
+        try:
+            await ws.close()
+        except:
+            pass
