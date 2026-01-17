@@ -21,9 +21,9 @@ import {
 
 // --- Types & Constants ---
 
-type Direction = "N" | "E"; // Only North (to South) and East (to East) for One-Way
+type Direction = "N" | "S" | "E" | "W";
 type LightState = "green" | "yellow" | "red";
-type PhaseState = "N_GREEN" | "N_YELLOW" | "ALL_RED_1" | "E_GREEN" | "E_YELLOW" | "ALL_RED_2";
+type PhaseState = "NS_GREEN" | "NS_YELLOW" | "ALL_RED_1" | "WE_GREEN" | "WE_YELLOW" | "ALL_RED_2";
 type VehicleType = "car" | "truck";
 
 interface Vehicle {
@@ -45,7 +45,6 @@ const CANVAS_SIZE = 800;
 const LANE_WIDTH = 50;
 const ROAD_WIDTH = LANE_WIDTH * 4; // 200px
 const CENTER = CANVAS_SIZE / 2;
-const STOP_LINE_OFFSET = ROAD_WIDTH / 2 + 15;
 const INTERSECTION_MIN = CENTER - ROAD_WIDTH / 2;
 const INTERSECTION_MAX = CENTER + ROAD_WIDTH / 2;
 
@@ -59,7 +58,7 @@ export default function SimulationPage() {
 
     const [isPaused, setIsPaused] = useState(false);
     const [isManual, setIsManual] = useState(false);
-    const [phase, setPhase] = useState<PhaseState>("N_GREEN");
+    const [phase, setPhase] = useState<PhaseState>("NS_GREEN");
     const [timer, setTimer] = useState(settings.greenDuration);
     const [cumulativePassed, setCumulativePassed] = useState(0);
 
@@ -71,13 +70,13 @@ export default function SimulationPage() {
 
     // --- Map Phase to Lights ---
     const getLights = useCallback(() => {
-        const l: Record<Direction, LightState> = { N: "red", E: "red" };
+        const l: Record<Direction, LightState> = { N: "red", S: "red", E: "red", W: "red" };
         switch (phase) {
-            case "N_GREEN": l.N = "green"; break;
-            case "N_YELLOW": l.N = "yellow"; break;
-            case "E_GREEN": l.E = "green"; break;
-            case "E_YELLOW": l.E = "yellow"; break;
-            default: break; // ALL_RED
+            case "NS_GREEN": l.N = "green"; l.S = "green"; break;
+            case "NS_YELLOW": l.N = "yellow"; l.S = "yellow"; break;
+            case "WE_GREEN": l.W = "green"; l.E = "green"; break;
+            case "WE_YELLOW": l.W = "yellow"; l.E = "yellow"; break;
+            default: break;
         }
         return l;
     }, [phase]);
@@ -94,24 +93,43 @@ export default function SimulationPage() {
 
     // --- Simulation Update ---
     const spawnVehicle = useCallback(() => {
-        ["N", "E"].forEach((dir) => {
-            ["1", "2", "3", "4"].forEach((laneNum) => {
-                const laneId = `${dir}${laneNum}`;
-                if (Math.random() < settings.spawnRate / 60) {
-                    const inLane = vehiclesRef.current.filter(v => v.laneId === laneId);
-                    const headDist = inLane.length > 0 ? (dir === "N" ? Math.min(...inLane.map(v => v.y)) : Math.min(...inLane.map(v => v.x))) : 1000;
+        ["N", "S", "E", "W"].forEach((dir) => {
+            // Thai Driving: Keep Left
+            // North-entry (Southbound) uses Lanes 1, 2
+            // South-entry (Northbound) uses Lanes 3, 4 (relative to center-line)
+            const lanes = (dir === "N" || dir === "E") ? ["1", "2"] : ["3", "4"];
 
-                    if (headDist > 100) { // Safety spawn distance
+            lanes.forEach((laneNum) => {
+                const laneId = `${dir}${laneNum}`;
+                if (Math.random() < settings.spawnRate / 120) { // Slower spawn as we have 4 directions now
+                    const inLane = vehiclesRef.current.filter(v => v.laneId === laneId);
+
+                    let headDist = 1000;
+                    if (inLane.length > 0) {
+                        if (dir === "N") headDist = Math.min(...inLane.map(v => v.y));
+                        else if (dir === "S") headDist = CANVAS_SIZE - Math.max(...inLane.map(v => v.y));
+                        else if (dir === "W") headDist = Math.min(...inLane.map(v => v.x));
+                        else if (dir === "E") headDist = CANVAS_SIZE - Math.max(...inLane.map(v => v.x));
+                    }
+
+                    if (headDist > 120) {
                         const type: VehicleType = Math.random() > 0.8 ? "truck" : "car";
                         const config = VEHICLE_CONFIGS[type];
                         let x = 0, y = 0;
                         if (dir === "N") {
-                            x = CENTER - ROAD_WIDTH / 2 + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                            x = INTERSECTION_MIN + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
                             y = -50;
-                        } else if (dir === "E") {
+                        } else if (dir === "S") {
+                            x = INTERSECTION_MIN + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                            y = CANVAS_SIZE + 50;
+                        } else if (dir === "W") {
                             x = -50;
-                            y = CENTER - ROAD_WIDTH / 2 + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                            y = INTERSECTION_MIN + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
+                        } else if (dir === "E") {
+                            x = CANVAS_SIZE + 50;
+                            y = INTERSECTION_MIN + (parseInt(laneNum) - 0.5) * LANE_WIDTH;
                         }
+
                         vehiclesRef.current.push({
                             id: `v-${nextIdRef.current++}`, type, laneId, direction: dir as Direction, x, y,
                             width: config.width, height: config.height, speed: 0, targetSpeed: settings.vehicleSpeed,
@@ -131,27 +149,37 @@ export default function SimulationPage() {
             let targetSpeed = v.targetSpeed;
             let shouldStop = false;
 
-            const stopLine = INTERSECTION_MIN - 15;
-            const isApproaching = (v.direction === "N" && v.y < stopLine) || (v.direction === "E" && v.x < stopLine);
-            const distToLine = v.direction === "N" ? stopLine - (v.y + v.width / 2) : stopLine - (v.x + v.width / 2);
+            const stopLineCoord = (v.direction === "N" || v.direction === "W") ? INTERSECTION_MIN - 15 : INTERSECTION_MAX + 15;
+
+            const isApproaching =
+                (v.direction === "N" && v.y < stopLineCoord) ||
+                (v.direction === "S" && v.y > stopLineCoord) ||
+                (v.direction === "W" && v.x < stopLineCoord) ||
+                (v.direction === "E" && v.x > stopLineCoord);
+
+            const distToLine = Math.abs(v.direction === "N" || v.direction === "S" ? stopLineCoord - v.y : stopLineCoord - v.x) - (v.width / 2);
 
             if (isApproaching && !v.hasCrossedIntersection) {
-                if (lights[v.direction] === "red" && distToLine < 5) shouldStop = true;
+                if (lights[v.direction] === "red" && distToLine < 10) shouldStop = true;
                 else if (lights[v.direction] === "yellow") {
-                    if (distToLine < 0) { /* Go through */ }
+                    if (distToLine < 0) { /* Crossed */ }
                     else if (distToLine < 60) shouldStop = true;
                 }
             }
 
-            // --- Collision Logic (Strict Solid Block) ---
-
-            // 1. Same-Lane Closest Leader
+            // --- Collision Logic ---
             let inFront: Vehicle | null = null;
             let minGapInLane = 1000;
 
             vehiclesRef.current.forEach(o => {
                 if (o.id === v.id || o.laneId !== v.laneId) return;
-                const gap = v.direction === "N" ? o.y - v.y : o.x - v.x;
+
+                let gap = 0;
+                if (v.direction === "N") gap = o.y - v.y;
+                else if (v.direction === "S") gap = v.y - o.y;
+                else if (v.direction === "W") gap = o.x - v.x;
+                else if (v.direction === "E") gap = v.x - o.x;
+
                 if (gap > 0 && gap < minGapInLane) {
                     minGapInLane = gap;
                     inFront = o;
@@ -169,67 +197,39 @@ export default function SimulationPage() {
                 }
             }
 
-            // 2. Cross-Lane Intersection Safety (If in or approaching intersection)
-            const isInIntersection = (x: number, y: number) => x > INTERSECTION_MIN - 20 && x < INTERSECTION_MAX + 20 && y > INTERSECTION_MIN - 20 && y < INTERSECTION_MAX + 20;
-
-            if (isInIntersection(v.x, v.y) || distToLine < 50) {
-                vehiclesRef.current.forEach(o => {
-                    if (o.id === v.id || o.laneId === v.laneId) return; // Same lane handled above
-
-                    const dx = Math.abs(o.x - v.x);
-                    const dy = Math.abs(o.y - v.y);
-
-                    // Simple AABB collision check for safety
-                    const combinedHalfWidth = (v.direction === "N" ? v.height : v.width) / 2 + (o.direction === "N" ? o.height : o.width) / 2;
-                    const combinedHalfHeight = (v.direction === "N" ? v.width : v.height) / 2 + (o.direction === "N" ? o.width : o.height) / 2;
-
-                    if (dx < combinedHalfWidth + 10 && dy < combinedHalfHeight + 10) {
-                        // If someone is in my path in the intersection, I should slow down/stop
-                        // Priority: North-South (Arbitrary or based on entry time)
-                        if (v.direction === "E" && o.direction === "N") {
-                            shouldStop = true;
-                        }
-                    }
-                });
-            }
-
             // --- Physics & Movement ---
             if (shouldStop) {
-                v.speed = Math.max(0, v.speed - 0.25);
+                v.speed = Math.max(0, v.speed - 0.35);
                 v.state = "stopped";
             } else {
-                if (v.speed < targetSpeed) v.speed = Math.min(targetSpeed, v.speed + 0.1);
-                else v.speed = Math.max(targetSpeed, v.speed - 0.2);
+                if (v.speed < targetSpeed) v.speed = Math.min(targetSpeed, v.speed + 0.15);
+                else v.speed = Math.max(targetSpeed, v.speed - 0.25);
                 v.state = v.speed > 0.1 ? "moving" : "stopped";
             }
 
-            // --- Frame-Ahead Protective Stop ---
-            const nextX = v.direction === "E" ? v.x + v.speed : v.x;
-            const nextY = v.direction === "N" ? v.y + v.speed : v.y;
-
-            const willCollide = vehiclesRef.current.some(o => {
-                if (o.id === v.id) return false;
-                const dx = Math.abs(o.x - nextX);
-                const dy = Math.abs(o.y - nextY);
-                const minX = (v.direction === "N" ? v.height : v.width) / 2 + (o.direction === "N" ? o.height : o.width) / 2 + 5;
-                const minY = (v.direction === "N" ? v.width : v.height) / 2 + (o.direction === "N" ? o.width : o.height) / 2 + 5;
-                return dx < minX && dy < minY;
-            });
-
-            if (willCollide && v.speed > 0) {
-                v.speed = 0;
-                v.state = "stopped";
-            }
-
-            if (v.direction === "N") v.y += v.speed; else if (v.direction === "E") v.x += v.speed;
+            // Move
+            if (v.direction === "N") v.y += v.speed;
+            else if (v.direction === "S") v.y -= v.speed;
+            else if (v.direction === "W") v.x += v.speed;
+            else if (v.direction === "E") v.x -= v.speed;
 
             if (!v.hasCrossedIntersection) {
-                if ((v.direction === "N" && v.y > INTERSECTION_MAX) || (v.direction === "E" && v.x > INTERSECTION_MAX)) {
-                    v.hasCrossedIntersection = true; setCumulativePassed(p => p + 1);
+                const hasExited =
+                    (v.direction === "N" && v.y > INTERSECTION_MAX) ||
+                    (v.direction === "S" && v.y < INTERSECTION_MIN) ||
+                    (v.direction === "W" && v.x > INTERSECTION_MAX) ||
+                    (v.direction === "E" && v.x < INTERSECTION_MIN);
+
+                if (hasExited) {
+                    v.hasCrossedIntersection = true;
+                    setCumulativePassed(p => p + 1);
                 }
             }
             return v;
-        }).filter(v => v.x < CANVAS_SIZE + 100 && v.y < CANVAS_SIZE + 100);
+        }).filter(v =>
+            v.x > -100 && v.x < CANVAS_SIZE + 100 &&
+            v.y > -100 && v.y < CANVAS_SIZE + 100
+        );
     }, [isPaused, spawnVehicle, getLights, settings]);
 
     const draw = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -237,34 +237,35 @@ export default function SimulationPage() {
 
         // Road Background
         ctx.fillStyle = "#16161a";
-        ctx.fillRect(CENTER - ROAD_WIDTH / 2, 0, ROAD_WIDTH, CANVAS_SIZE); // North to South
-        ctx.fillRect(0, CENTER - ROAD_WIDTH / 2, CANVAS_SIZE, ROAD_WIDTH); // West to East
+        ctx.fillRect(INTERSECTION_MIN, 0, ROAD_WIDTH, CANVAS_SIZE);
+        ctx.fillRect(0, INTERSECTION_MIN, CANVAS_SIZE, ROAD_WIDTH);
 
         // Lane Markers
-        ctx.setLineDash([15, 20]); ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"; ctx.lineWidth = 2;
+        ctx.setLineDash([15, 20]); ctx.strokeStyle = "rgba(255, 255, 255, 0.1)"; ctx.lineWidth = 1;
         for (let i = 1; i < 4; i++) {
-            // Vertical lanes
+            if (i === 2) { // Center divider
+                ctx.setLineDash([]); ctx.strokeStyle = "rgba(251, 191, 36, 0.3)"; ctx.lineWidth = 2;
+            } else {
+                ctx.setLineDash([15, 20]); ctx.strokeStyle = "rgba(255, 255, 255, 0.1)"; ctx.lineWidth = 1;
+            }
             const vx = INTERSECTION_MIN + i * LANE_WIDTH;
             ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, CANVAS_SIZE); ctx.stroke();
-            // Horizontal lanes
             const vy = INTERSECTION_MIN + i * LANE_WIDTH;
             ctx.beginPath(); ctx.moveTo(0, vy); ctx.lineTo(CANVAS_SIZE, vy); ctx.stroke();
         }
 
-        // Road Borders
-        ctx.setLineDash([]); ctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; ctx.lineWidth = 2;
-        ctx.strokeRect(CENTER - ROAD_WIDTH / 2, 0, ROAD_WIDTH, CANVAS_SIZE);
-        ctx.strokeRect(0, CENTER - ROAD_WIDTH / 2, CANVAS_SIZE, ROAD_WIDTH);
-
         // Stop Lines
-        ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 4;
-        // N (Top)
-        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MIN - 15); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MIN - 15); ctx.stroke();
-        // E (Left)
-        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MIN - 15, INTERSECTION_MAX); ctx.stroke();
+        ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 4; ctx.setLineDash([]);
+        // N Stop (Top)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN, INTERSECTION_MIN - 15); ctx.lineTo(CENTER, INTERSECTION_MIN - 15); ctx.stroke();
+        // S Stop (Bottom)
+        ctx.beginPath(); ctx.moveTo(CENTER, INTERSECTION_MAX + 15); ctx.lineTo(INTERSECTION_MAX, INTERSECTION_MAX + 15); ctx.stroke();
+        // W Stop (Left)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MIN - 15, CENTER); ctx.lineTo(INTERSECTION_MIN - 15, INTERSECTION_MAX); ctx.stroke();
+        // E Stop (Right)
+        ctx.beginPath(); ctx.moveTo(INTERSECTION_MAX + 15, INTERSECTION_MIN); ctx.lineTo(INTERSECTION_MAX + 15, CENTER); ctx.stroke();
 
         const lights = getLights();
-        // North Light (Top Right of intersection)
         const drawTrafficLight = (lx: number, ly: number, color: LightState) => {
             ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(lx, ly, 15, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = color === "green" ? "#10b981" : color === "yellow" ? "#f59e0b" : "#ef4444";
@@ -272,24 +273,22 @@ export default function SimulationPage() {
             ctx.beginPath(); ctx.arc(lx, ly, 10, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
         };
 
-        drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MIN - 25, lights.N); // N
-        drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MAX + 25, lights.E); // E
-
-        // Directional Arrows on road
-        ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
-        for (let i = 0; i < 4; i++) {
-            const lx = INTERSECTION_MIN + (i + 0.5) * LANE_WIDTH;
-            const ly = INTERSECTION_MIN + (i + 0.5) * LANE_WIDTH;
-            // North Arrows
-            ctx.fillText("↓", lx - 4, 100); ctx.fillText("↓", lx - 4, 700);
-            // East Arrows
-            ctx.fillText("→", 100, ly + 4); ctx.fillText("→", 700, ly + 4);
-        }
+        drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MIN - 25, lights.N);
+        drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MAX + 25, lights.S);
+        drawTrafficLight(INTERSECTION_MIN - 25, INTERSECTION_MIN - 25, lights.W);
+        drawTrafficLight(INTERSECTION_MAX + 25, INTERSECTION_MAX + 25, lights.E);
 
         vehiclesRef.current.forEach(v => {
-            ctx.save(); ctx.translate(v.x, v.y); ctx.rotate(v.direction === "N" ? Math.PI / 2 : 0);
+            ctx.save(); ctx.translate(v.x, v.y);
+            let rotation = 0;
+            if (v.direction === "N") rotation = Math.PI / 2;
+            else if (v.direction === "S") rotation = -Math.PI / 2;
+            else if (v.direction === "W") rotation = 0;
+            else if (v.direction === "E") rotation = Math.PI;
+
+            ctx.rotate(rotation);
             if (imagesRef.current) ctx.drawImage(imagesRef.current[v.type], -v.width / 2, -v.height / 2, v.width, v.height);
-            else { ctx.fillStyle = v.type === "truck" ? "#3b82f6" : "#f59e0b"; ctx.fillRect(-v.width / 2, -v.height / 2, v.width, v.height); }
+            else { ctx.fillStyle = v.direction === "N" || v.direction === "S" ? "#3b82f6" : "#f59e0b"; ctx.fillRect(-v.width / 2, -v.height / 2, v.width, v.height); }
             if (v.state === "stopped") { ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(-v.width / 2, -v.height / 3, 3, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(-v.width / 2, v.height / 3, 3, 0, Math.PI * 2); ctx.fill(); }
             ctx.restore();
         });
@@ -307,12 +306,12 @@ export default function SimulationPage() {
             setTimer(t => {
                 if (t <= 1) {
                     setPhase(p => {
-                        if (p === "N_GREEN") { setTimer(settings.yellowDuration); return "N_YELLOW"; }
-                        if (p === "N_YELLOW") { setTimer(1); return "ALL_RED_1"; }
-                        if (p === "ALL_RED_1") { setTimer(settings.greenDuration); return "E_GREEN"; }
-                        if (p === "E_GREEN") { setTimer(settings.yellowDuration); return "E_YELLOW"; }
-                        if (p === "E_YELLOW") { setTimer(1); return "ALL_RED_2"; }
-                        setTimer(settings.greenDuration); return "N_GREEN";
+                        if (p === "NS_GREEN") { setTimer(settings.yellowDuration); return "NS_YELLOW"; }
+                        if (p === "NS_YELLOW") { setTimer(2); return "ALL_RED_1"; }
+                        if (p === "ALL_RED_1") { setTimer(settings.greenDuration); return "WE_GREEN"; }
+                        if (p === "WE_GREEN") { setTimer(settings.yellowDuration); return "WE_YELLOW"; }
+                        if (p === "WE_YELLOW") { setTimer(2); return "ALL_RED_2"; }
+                        setTimer(settings.greenDuration); return "NS_GREEN";
                     });
                 }
                 return t - 1;
@@ -323,7 +322,7 @@ export default function SimulationPage() {
 
     const togglePhase = () => {
         if (!isManual) return;
-        setPhase(p => p.startsWith("N") ? "E_GREEN" : "N_GREEN");
+        setPhase(p => p.startsWith("NS") ? "WE_GREEN" : "NS_GREEN");
         setTimer(settings.greenDuration);
     };
 
@@ -342,22 +341,22 @@ export default function SimulationPage() {
                             <Button onClick={() => setIsPaused(!isPaused)} variant="outline" className="h-12 border-white/10">{isPaused ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />} {isPaused ? "Resume" : "Pause"}</Button>
                         </div>
                         <Card className="bg-black/40 border-white/5 p-4 space-y-4">
-                            <div className="flex justify-between items-center"><span className="text-[10px] font-black uppercase text-zinc-500">One-Way Cycle</span><div className="flex items-center gap-2 text-sky-400 font-mono text-xs"><Timer className="w-3 h-3" /> {timer}s</div></div>
+                            <div className="flex justify-between items-center"><span className="text-[10px] font-black uppercase text-zinc-500">2-Way Cycle</span><div className="flex items-center gap-2 text-sky-400 font-mono text-xs"><Timer className="w-3 h-3" /> {timer}s</div></div>
                             <div className="space-y-2">
-                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith("N") ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline"><ArrowDown className="w-4 h-4" /> <div><div className="text-[8px] font-black">ONE-WAY A</div><div className="text-[10px]">NORTH ➔ SOUTH</div></div></Button>
-                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith("E") ? 'bg-sky-500/10 text-sky-400 border-sky-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline"><ArrowRight className="w-4 h-4" /> <div><div className="text-[8px] font-black">ONE-WAY B</div><div className="text-[10px]">WEST ➔ EAST</div></div></Button>
+                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith("NS") ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline"><div className="flex flex-col"><div className="text-[8px] font-black">PHASE A</div><div className="text-[10px]">NORTH ⇵ SOUTH</div></div></Button>
+                                <Button disabled={!isManual} onClick={togglePhase} className={`w-full justify-start gap-3 h-14 uppercase ${phase.startsWith("WE") ? 'bg-sky-500/10 text-sky-400 border-sky-500/30' : 'text-zinc-600 border-white/5'}`} variant="outline"><div className="flex flex-col"><div className="text-[8px] font-black">PHASE B</div><div className="text-[10px]">WEST ⇄ EAST</div></div></Button>
                             </div>
                         </Card>
                         <div className="p-4 bg-sky-500/5 border border-sky-500/10 rounded-xl space-y-2">
                             <h3 className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">Efficiency</h3>
-                            <div className="grid grid-cols-2 gap-4"><div><p className="text-[8px] text-zinc-500 uppercase">Active_Lanes</p><p className="text-lg font-black">8_LANES</p></div><div><p className="text-[8px] text-zinc-500 uppercase">Flow_Rate</p><p className="text-lg font-black">{cumulativePassed}</p></div></div>
+                            <div className="grid grid-cols-2 gap-4"><div><p className="text-[8px] text-zinc-500 uppercase">Input_Streams</p><p className="text-lg font-black">4_WAY</p></div><div><p className="text-[8px] text-zinc-500 uppercase">Flow_Rate</p><p className="text-lg font-black">{cumulativePassed}</p></div></div>
                         </div>
                         <Button onClick={() => { vehiclesRef.current = []; setCumulativePassed(0); }} variant="outline" className="mt-auto h-10 border-white/10 text-zinc-500 text-[10px] font-black uppercase tracking-widest"><RefreshCcw className="w-3 h-3 mr-2" /> Reset Engine</Button>
                     </aside>
                     <section className="flex-1 relative bg-[#060608] flex items-center justify-center p-8 overflow-hidden">
                         <div className="relative shadow-[0_0_100px_rgba(0,0,0,0.8)] border border-white/5 rounded-2xl overflow-hidden aspect-square h-full max-h-[90vh]">
                             <canvas ref={canvasRef} width={CANVAS_SIZE} height={CANVAS_SIZE} className="w-full h-full" />
-                            <div className="absolute top-6 left-6 pointer-events-none"><Badge className="bg-amber-500 text-black font-black text-[10px] tracking-widest px-2 animate-pulse mb-2">ONE_WAY_ACTIVE</Badge><h2 className="text-3xl font-black text-white/5 italic select-none">SMART_GRID_V4.0</h2></div>
+                            <div className="absolute top-6 left-6 pointer-events-none"><Badge className="bg-sky-500 text-white font-black text-[10px] tracking-widest px-2 animate-pulse mb-2">2Way_ACTIVE</Badge><h2 className="text-3xl font-black text-white/5 italic select-none">SMART_GRID_V5.0</h2></div>
                             <div className="absolute bottom-6 right-6 pointer-events-none text-right font-black text-[10px] text-sky-500/50 uppercase tracking-widest">{phase.replace("_", " ")}</div>
                         </div>
                     </section>
