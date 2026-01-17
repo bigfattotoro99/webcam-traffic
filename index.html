@@ -423,9 +423,15 @@
         }
 
         function initWebSocket() {
-            const ws = new WebSocket(`ws://${location.hostname}:8000/ws`);
+            // Attempt to connect to local backend (for local dev)
+            const wsUrl = `ws://${location.hostname}:8000/ws`;
+            console.log("Attempting to connect to backend:", wsUrl);
+
+            const ws = new WebSocket(wsUrl);
+            let isConnected = false;
 
             ws.onopen = () => {
+                isConnected = true;
                 document.getElementById("statusDot").classList.add("online");
                 console.log("WebSocket Connected");
             };
@@ -439,17 +445,55 @@
                         updateMap(id, r.level);
                     });
                 }
-                if (data.thresholds) {
-                    document.getElementById("thRed").innerText = data.thresholds.red;
-                    document.getElementById("thYellow").innerText = data.thresholds.yellow;
-                }
             };
 
             ws.onclose = () => {
-                document.getElementById("statusDot").classList.remove("online");
-                console.log("WebSocket Disconnected. Retrying in 2s...");
-                setTimeout(initWebSocket, 2000);
+                if (isConnected) {
+                    document.getElementById("statusDot").classList.remove("online");
+                    console.log("WebSocket Disconnected. Retrying in 2s...");
+                    setTimeout(initWebSocket, 2000);
+                } else {
+                    console.warn("Backend not found. Switching to Client-Side Simulation Mode.");
+                    startClientSimulation();
+                }
             };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        function startClientSimulation() {
+            document.getElementById("statusDot").classList.add("online");
+            document.getElementById("statusDot").style.background = "#38bdf8"; // Blue for simulation mode
+            document.getElementById("statusDot").style.boxShadow = "0 0 10px #38bdf8";
+
+            setInterval(() => {
+                const now = Date.now();
+                const roads = {};
+                const base_v = {
+                    krungthonburi: 20,
+                    charoenkrung: 15,
+                    ratchawithi: 30,
+                    rama9: 25,
+                    asokdindaeng: 35
+                };
+
+                ROUTES_CONFIG.forEach(r => {
+                    const v = Math.max(0, Math.floor(base_v[r.id] + (Math.random() * 15 - 5)));
+                    const p = Math.max(0, Math.floor(5 + (Math.random() * 6 - 3)));
+
+                    let level = "LOW";
+                    if (v >= 25) level = "HIGH";
+                    else if (v >= 10) level = "MED";
+
+                    updateUI(r.id, {
+                        counts_smooth: { vehicles: v, people: p },
+                        level: level
+                    });
+                    updateMap(r.id, level);
+                });
+            }, 1000);
         }
 
         function updateUI(id, road) {
